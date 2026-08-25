@@ -62,8 +62,56 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
   const [selectedLevel, setSelectedLevel] = useState<(typeof levels)[number]>("A2");
   const [selectedDuration, setSelectedDuration] = useState<(typeof durations)[number]>("10 min");
   const [selectedTutor, setSelectedTutor] = useState("emma");
+  const [isStartingPractice, setIsStartingPractice] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
   const language = languages.find((item) => item.id === selectedLanguage) ?? languages[0];
   const firstName = userName.trim().split(/\s+/)[0] || "Learner";
+
+  async function startVoicePractice() {
+    if (isStartingPractice) {
+      return;
+    }
+
+    setIsStartingPractice(true);
+    setStartError(null);
+
+    try {
+      const response = await fetch("/api/practice-setup", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          languageId: selectedLanguage,
+          topicId: selectedTopic,
+          level: selectedLevel,
+          durationMinutes: Number.parseInt(selectedDuration, 10),
+          tutorId: selectedTutor,
+        }),
+      });
+      const result: unknown = await response.json();
+
+      if (response.status === 401) {
+        router.push("/sign-in");
+        return;
+      }
+
+      if (!response.ok || !isSuccessfulPracticeSetup(result)) {
+        throw new Error(getPracticeSetupError(result));
+      }
+
+      router.push(`/voice-call?sessionId=${encodeURIComponent(result.sessionId)}`);
+    } catch (error) {
+      setStartError(
+        error instanceof Error
+          ? error.message
+          : "We could not create your practice session. Please try again.",
+      );
+    } finally {
+      setIsStartingPractice(false);
+    }
+  }
 
   return (
     <main className="mx-auto max-w-[1280px] px-5 py-10 sm:px-8 lg:px-10 lg:py-12">
@@ -149,8 +197,13 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
                 <div className="flex items-center justify-between text-sm"><span className="text-app-muted">Level</span><span className="font-semibold text-app-text">{selectedLevel}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-app-muted">Duration</span><span className="font-semibold text-app-text">{selectedDuration}</span></div>
               </div>
-              <button type="button" onClick={() => router.push("/voice-call")} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-app-primary px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 active:scale-[0.99]">
-                <Mic className="h-5 w-5" /> Start Voice Practice
+              {startError ? (
+                <p className="mt-4 text-sm font-medium leading-5 text-app-error" role="alert">
+                  {startError}
+                </p>
+              ) : null}
+              <button type="button" onClick={startVoicePractice} disabled={isStartingPractice} aria-busy={isStartingPractice} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-app-primary px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70">
+                <Mic className="h-5 w-5" /> {isStartingPractice ? "Preparing practice..." : "Start Voice Practice"}
               </button>
             </aside>
           </div>
@@ -171,4 +224,31 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
       </section>
     </main>
   );
+}
+
+function isSuccessfulPracticeSetup(
+  value: unknown,
+): value is { success: true; sessionId: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "success" in value &&
+    value.success === true &&
+    "sessionId" in value &&
+    typeof value.sessionId === "string" &&
+    value.sessionId.length > 0
+  );
+}
+
+function getPracticeSetupError(value: unknown): string {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "message" in value &&
+    typeof value.message === "string"
+  ) {
+    return value.message;
+  }
+
+  return "We could not create your practice session. Please try again.";
 }
