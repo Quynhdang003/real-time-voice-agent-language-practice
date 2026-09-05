@@ -2,11 +2,19 @@
   "name": "ai-language-learning-voice-agent",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "patch-package --error-on-fail",
+    "test:firebase-runtime": "node --no-experimental-require-module --test tests/firebase-runtime.test.mjs"
+  },
+  "overrides": {
+    "jwks-rsa": "4.1.0"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -17,6 +25,7 @@
     "firebase-admin": "^14.3.0",
     "lucide-react": "^1.34.0",
     "next": "16.3.3",
+    "patch-package": "8.0.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "shadcn": "^4.19.0",

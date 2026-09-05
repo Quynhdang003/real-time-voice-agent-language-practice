@@ -31,6 +31,20 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
+Use Node.js 24.x (also declared in `package.json`) and install dependencies with
+`npm ci`. The `postinstall` script applies `patches/jwks-rsa+4.1.0.patch`; do not
+disable install scripts. Include the patch file with the deployment source.
+
+This patch loads `jose` via dynamic import in both JWKS key retrieval and the
+Passport integration, so Firebase Admin can start when the serverless runtime
+disables synchronous `require(ESM)`. The `jwks-rsa` override pins the version the
+patch targets. Revisit both when an upstream release fixes these imports.
+See [upstream issue](https://github.com/auth0/node-jwks-rsa/issues/507).
+
+Run `npm run test:firebase-runtime` to check Firebase Auth imports and signing-key
+retrieval with `require(ESM)` disabled, then `npm run build`. After deploying,
+check `/` and `/sign-in` in the Function logs for `ERR_REQUIRE_ESM`.
+
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
