@@ -15,41 +15,36 @@ import { LanguageCard } from "@/components/fluent/language-card";
 import { SessionCard } from "@/components/fluent/session-card";
 import { TopicCard } from "@/components/fluent/topic-card";
 import { TutorCard } from "@/components/fluent/tutor-card";
-import type { Language, PracticeSession, Topic, Tutor } from "@/components/fluent/types";
+import type { Language, PracticeSessionSummary, Topic, Tutor } from "@/components/fluent/types";
+import {
+  practiceLanguages, practiceTopics, practiceTutors,
+  practiceLevels as levels, practiceDurations as durations, practiceSessionHref,
+  type LanguageId, type TopicId, type TutorId,
+} from "@/lib/practice/session";
 import { cn } from "@/lib/utils";
 
-const languages: Language[] = [
-  { id: "english", name: "English", flag: "🇬🇧", level: "CEFR A2", progress: 68 },
-  { id: "japanese", name: "Japanese", flag: "🇯🇵", level: "CEFR Beginner", progress: 24 },
-  { id: "korean", name: "Korean", flag: "🇰🇷", level: "CEFR Beginner", progress: 18 },
-  { id: "chinese", name: "Chinese", flag: "🇨🇳", level: "CEFR Beginner", progress: 12 },
-  { id: "french", name: "French", flag: "🇫🇷", level: "CEFR A1", progress: 36 },
-  { id: "spanish", name: "Spanish", flag: "🇪🇸", level: "CEFR A1", progress: 42 },
-];
+// Presentation-only sample progress; allowed choices come from the shared domain config.
+const languagePresentation = {
+  english: { flag: "🇬🇧", level: "CEFR A2", progress: 68 },
+  japanese: { flag: "🇯🇵", level: "CEFR Beginner", progress: 24 },
+  korean: { flag: "🇰🇷", level: "CEFR Beginner", progress: 18 },
+  chinese: { flag: "🇨🇳", level: "CEFR Beginner", progress: 12 },
+  french: { flag: "🇫🇷", level: "CEFR A1", progress: 36 },
+  spanish: { flag: "🇪🇸", level: "CEFR A1", progress: 42 },
+};
+const languages: Language[] = Object.values(practiceLanguages).map((language) => ({
+  ...language, ...languagePresentation[language.id],
+}));
+const topicIcons = {
+  daily: MessagesSquare, travel: Plane, restaurant: Utensils,
+  interview: BriefcaseBusiness, shopping: ShoppingBag, "free-talk": Sparkles,
+};
+const topics: Topic[] = Object.values(practiceTopics).map((topic) => ({
+  ...topic, icon: topicIcons[topic.id],
+}));
+const tutors: Tutor[] = Object.values(practiceTutors);
 
-const topics: Topic[] = [
-  { id: "daily", name: "Daily Conversation", icon: MessagesSquare },
-  { id: "travel", name: "Travel", icon: Plane },
-  { id: "restaurant", name: "Restaurant", icon: Utensils },
-  { id: "interview", name: "Job Interview", icon: BriefcaseBusiness },
-  { id: "shopping", name: "Shopping", icon: ShoppingBag },
-  { id: "free-talk", name: "Free Talk", icon: Sparkles },
-];
-
-const levels = ["Beginner", "A1", "A2", "B1", "B2"] as const;
-const durations = ["5 min", "10 min", "15 min"] as const;
-
-const tutors: Tutor[] = [
-  {
-    id: "emma",
-    name: "Emma",
-    role: "English Tutor",
-    description: "Friendly tutor focused on everyday conversations.",
-    specialties: ["Everyday English", "Pronunciation"],
-  },
-];
-
-const recentSessions: PracticeSession[] = [
+const recentSessions: PracticeSessionSummary[] = [
   { id: "restaurant", title: "Restaurant Conversation", language: "English", level: "A2", duration: "8 min", score: 82, icon: Utensils, iconClassName: "bg-orange-50 text-orange-500" },
   { id: "travel", title: "Travel", language: "English", level: "A2", duration: "10 min", score: 76, icon: Plane, iconClassName: "bg-sky-50 text-sky-500" },
   { id: "conversation", title: "Daily Conversation", language: "English", level: "A2", duration: "6 min", score: 85, icon: MessagesSquare, iconClassName: "bg-violet-50 text-violet-500" },
@@ -57,11 +52,11 @@ const recentSessions: PracticeSession[] = [
 
 export function HomePracticeSetup({ userName }: { userName: string }) {
   const router = useRouter();
-  const [selectedLanguage, setSelectedLanguage] = useState("english");
-  const [selectedTopic, setSelectedTopic] = useState("daily");
+  const [selectedLanguage, setSelectedLanguage] = useState<LanguageId>("english");
+  const [selectedTopic, setSelectedTopic] = useState<TopicId>("daily");
   const [selectedLevel, setSelectedLevel] = useState<(typeof levels)[number]>("A2");
-  const [selectedDuration, setSelectedDuration] = useState<(typeof durations)[number]>("10 min");
-  const [selectedTutor, setSelectedTutor] = useState("emma");
+  const [selectedDuration, setSelectedDuration] = useState<(typeof durations)[number]>(10);
+  const [selectedTutor, setSelectedTutor] = useState<TutorId>("emma");
   const [isStartingPractice, setIsStartingPractice] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const language = languages.find((item) => item.id === selectedLanguage) ?? languages[0];
@@ -86,7 +81,7 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
           languageId: selectedLanguage,
           topicId: selectedTopic,
           level: selectedLevel,
-          durationMinutes: Number.parseInt(selectedDuration, 10),
+          durationMinutes: selectedDuration,
           tutorId: selectedTutor,
         }),
       });
@@ -101,7 +96,7 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
         throw new Error(getPracticeSetupError(result));
       }
 
-      router.push(`/voice-call?sessionId=${encodeURIComponent(result.sessionId)}`);
+      router.push(practiceSessionHref("voice-call", result.sessionId));
     } catch (error) {
       setStartError(
         error instanceof Error
@@ -179,7 +174,7 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
                   {durations.map((duration) => {
                     const selected = selectedDuration === duration;
                     return (
-                      <button key={duration} type="button" onClick={() => setSelectedDuration(duration)} aria-pressed={selected} className={cn("h-12 rounded-xl text-sm font-semibold transition focus:outline-none focus:ring-4 focus:ring-indigo-100", selected ? "border-2 border-app-primary bg-indigo-50 text-app-primary hover:bg-indigo-100" : "border border-app-border bg-white text-app-text hover:border-indigo-300 hover:bg-slate-50")}>{duration}</button>
+                      <button key={duration} type="button" onClick={() => setSelectedDuration(duration)} aria-pressed={selected} className={cn("h-12 rounded-xl text-sm font-semibold transition focus:outline-none focus:ring-4 focus:ring-indigo-100", selected ? "border-2 border-app-primary bg-indigo-50 text-app-primary hover:bg-indigo-100" : "border border-app-border bg-white text-app-text hover:border-indigo-300 hover:bg-slate-50")}>{duration} min</button>
                     );
                   })}
                 </div>
@@ -195,7 +190,7 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
               <div className="mt-5 space-y-3 rounded-xl border border-app-border p-4">
                 <div className="flex items-center justify-between text-sm"><span className="text-app-muted">Language</span><span className="font-semibold text-app-text">{language.name}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-app-muted">Level</span><span className="font-semibold text-app-text">{selectedLevel}</span></div>
-                <div className="flex items-center justify-between text-sm"><span className="text-app-muted">Duration</span><span className="font-semibold text-app-text">{selectedDuration}</span></div>
+                <div className="flex items-center justify-between text-sm"><span className="text-app-muted">Duration</span><span className="font-semibold text-app-text">{selectedDuration} min</span></div>
               </div>
               {startError ? (
                 <p className="mt-4 text-sm font-medium leading-5 text-app-error" role="alert">

@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Clock3 } from "lucide-react";
-import type { PracticeSession } from "@/components/fluent/types";
+import type { PracticeSessionSummary } from "@/components/fluent/types";
 import { cn } from "@/lib/utils";
 
-export function SessionCard({ session }: { session: PracticeSession }) {
+export function SessionCard({ session }: { session: PracticeSessionSummary }) {
   const Icon = session.icon;
   return (
     <article className="rounded-2xl border border-app-border bg-white p-5 shadow-card">
