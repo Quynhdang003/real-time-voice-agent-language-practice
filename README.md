@@ -34,6 +34,27 @@ public hosts, never localhost or internal services. Downloads require HTTPS,
 reject redirects, time out after 15 seconds, and accept at most 256 KiB.
 Signed query parameters are preserved; API keys are not sent to storage.
 
+For local Dograh in Docker with Next.js running on the host, add these server-only
+settings to `.env.local` and restart Next.js:
+
+```dotenv
+DOGRAH_TRANSCRIPT_MODE=local
+DOGRAH_TRANSCRIPT_LOCAL_ORIGINS=http://localhost:8000,http://localhost:9000
+```
+
+These origins allow the Dograh API on port 8000 to redirect to MinIO on port 9000.
+An origin must match the scheme, hostname, and port exactly, with no path, query,
+or trailing slash. Local origins are ignored unless the mode is exactly `local`.
+Only HTTP(S) is accepted, URL credentials are rejected, and each redirect target
+must pass the URL policy before a request is sent. Downloads follow at most three
+redirects from configured local origins, sharing one 15-second deadline including
+the final body. The 256 KiB limit and UTF-8 validation still apply.
+
+Remove both local settings for public deployments. Without the local opt-in, the
+HTTPS-only policy and rejection of redirects remain unchanged. If Next.js runs in
+a container, configure origins reachable from that container instead of assuming
+that `localhost` refers to the Docker host.
+
 For a known workflow run, the webhook stores parsed turns in `dograh.transcript`
 and sets `dograh.transcriptStatus` to `ready`, `empty`, or `error`. A repeated
 delivery of the same successfully downloaded URL reuses the stored transcript.
@@ -45,6 +66,13 @@ Run `npm run test:dograh-transcript` for isolated download/parser/webhook tests.
 Also verify a real call on staging: its run ID must already be saved on the
 practice session when the webhook arrives. Unknown runs are acknowledged and
 skipped; they are not queued for later ingestion.
+
+To recover an existing local session after enabling these settings, redeliver
+`POST /api/dograh/transcript-webhook` with the existing secret header and a JSON
+body containing its `workflow_run_id` and full saved `dograh.transcriptUrl` as
+`transcript_url`. Verify `dograh.transcriptStatus` becomes `ready` and parsed turns
+are saved in Firestore, then reload the review page. HTTP 200 alone does not prove
+the transcript downloaded. Do not manually set `ready` without parsed turns.
 
 ## Testing
 

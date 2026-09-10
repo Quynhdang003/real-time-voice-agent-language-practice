@@ -8,6 +8,138 @@ const { applyDograhTranscriptEvent, parseDograhWebhookEvent } = loadTs("lib/dogr
 const url = "https://storage.example.test/31.txt?signature=secret";
 const hosts = ["storage.example.test"];
 const raw = "[00:00] assistant: Hello\r\n[00:01] user: Xin chào\r\nContinuation";
+const localOrigins = ["http://localhost:8000", "http://localhost:9000"];
+const localUrl = "http://localhost:8000/transcripts/33";
+
+test("local Dograh redirect to MinIO preserves queries and parses speech", async () => {
+  const destination = "http://localhost:9000/transcripts/33.txt?signature=a%2Bb&expires=123";
+  const calls = [];
+  let cancelled = false;
+  const actual = await fetchDograhTranscript(localUrl, hosts, async (source, options) => {
+    calls.push({ url: source.href, options });
+    if (calls.length === 1) return new Response(new ReadableStream({
+      cancel() { cancelled = true; },
+    }), { status: 302, headers: { location: destination } });
+    assert.equal(cancelled, true);
+    return new Response(raw, { headers: { "content-type": "application/octet-stream" } });
+  }, localOrigins);
+  assert.deepEqual(calls.map(call => call.url), [localUrl, destination]);
+  for (const { options } of calls) {
+    assert.equal(options.redirect, "manual");
+    assert.equal(options.cache, "no-store");
+    assert.equal(options.headers, undefined);
+    assert.equal(options.signal, calls[0].options.signal);
+  }
+  assert.equal(actual, raw);
+  assert.deepEqual(parseDograhTranscriptText(actual).map(turn => turn.role), ["tutor", "learner"]);
+});
+
+test("local redirects reject untrusted destinations before requesting them", async () => {
+  for (const destination of ["http://localhost:9001/file", "http://127.0.0.1:9000/file",
+    "http://localhost.evil.test:9000/file", "http://169.254.169.254/file",
+    "https://localhost:9000/file", "http://user:secret@localhost:9000/file",
+    "file:///etc/passwd", "ftp://localhost:9000/file", "http://["]) {
+    let calls = 0;
+    await assert.rejects(fetchDograhTranscript(localUrl, hosts, async () => {
+      assert.equal(++calls, 1, "must not request the redirect destination");
+      return new Response(null, { status: 302, headers: { location: destination } });
+    }, localOrigins), { message: "Unable to download the Dograh transcript." });
+    assert.equal(calls, 1);
+  }
+});
+
+test("local redirects resolve relative locations and stop loops or missing locations", async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    const visited = [];
+    assert.equal(await fetchDograhTranscript(localUrl, hosts, async source => {
+      visited.push(source.href);
+      return visited.length === 1
+        ? new Response(null, { status, headers: { location: "../files/33.txt?signature=a%2Bb" } })
+        : new Response(raw);
+    }, localOrigins), raw);
+    assert.deepEqual(visited, [localUrl, "http://localhost:8000/files/33.txt?signature=a%2Bb"]);
+  }
+  let calls = 0, cancelled = 0;
+  await assert.rejects(fetchDograhTranscript(localUrl, hosts, async () => {
+    calls++;
+    return new Response(new ReadableStream({ cancel() { cancelled++; } }), {
+      status: 302, headers: { location: localUrl },
+    });
+  }, localOrigins), /Unable to download/);
+  assert.equal(calls, 4);
+  assert.equal(cancelled, 4);
+  await assert.rejects(fetchDograhTranscript(localUrl, hosts,
+    async () => new Response(null, { status: 302 }), localOrigins), /Unable to download/);
+});
+
+test("local origins are opt-in, exact HTTP origins; final downloads still enforce limits", async () => {
+  const mustNotFetch = async () => assert.fail("must not fetch");
+  await assert.rejects(fetchDograhTranscript(localUrl, hosts, mustNotFetch), /Unable to download/);
+  await assert.rejects(fetchDograhTranscript(localUrl, hosts, mustNotFetch,
+    ["http://localhost:8000/path"]), /Unable to download/);
+  await assert.rejects(fetchDograhTranscript("file:///etc/passwd", hosts, mustNotFetch,
+    ["null"]), /Unable to download/);
+  await assert.rejects(fetchDograhTranscript("ftp://localhost:8000/file", hosts, mustNotFetch,
+    ["ftp://localhost:8000"]), /Unable to download/);
+  for (const finalResponse of [
+    () => new Response("denied", { status: 403 }),
+    () => new Response("x", { headers: { "content-length": "999999" } }),
+    () => new Response("x".repeat(256 * 1024 + 1)),
+    () => new Response(new Uint8Array([255])),
+  ]) {
+    let calls = 0;
+    await assert.rejects(fetchDograhTranscript(localUrl, hosts, async () => ++calls === 1
+      ? new Response(null, { status: 302, headers: { location: "http://localhost:9000/file" } })
+      : finalResponse(), localOrigins), /Unable to download/);
+    assert.equal(calls, 2);
+  }
+});
+
+test("server enables local download only with explicit mode and origins, recovering an error", async (t) => {
+  const keys = ["DOGRAH_TRANSCRIPT_MODE", "DOGRAH_TRANSCRIPT_LOCAL_ORIGINS", "DOGRAH_TRANSCRIPT_ALLOWED_HOSTS"];
+  const previous = keys.map(key => process.env[key]);
+  t.after(() => keys.forEach((key, index) => {
+    if (previous[index] === undefined) delete process.env[key];
+    else process.env[key] = previous[index];
+  }));
+  process.env.DOGRAH_TRANSCRIPT_LOCAL_ORIGINS = ` ${localOrigins.join(", ")}, `;
+  process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS = hosts.join(",");
+  let requests = 0, update;
+  t.mock.method(globalThis, "fetch", async source => {
+    requests++;
+    return source.origin === localOrigins[0]
+      ? new Response(null, { status: 302, headers: { location: `${localOrigins[1]}/33.txt` } })
+      : new Response(raw);
+  });
+  t.mock.method(console, "error", () => {});
+  const { ingestDograhTranscriptWebhook } = loadTs("lib/dograh/server.ts", {
+    "@/firebase/admin": { adminDb: { collection: () => ({
+      where: () => ({ limit: () => ({ get: async () => ({ empty: false,
+        docs: [{ id: "session-a", data: () => ({ dograh: {
+          workflowRunId: 33, transcriptUrl: localUrl, transcriptStatus: "error",
+        } }) }],
+      }) }) }),
+      doc: () => ({ update: async patch => { update = patch; } }),
+    }) } },
+  });
+  for (const mode of [undefined, "public", "LOCAL", "local"]) {
+    if (mode === undefined) delete process.env.DOGRAH_TRANSCRIPT_MODE;
+    else process.env.DOGRAH_TRANSCRIPT_MODE = mode;
+    update = undefined;
+    assert.equal((await ingestDograhTranscriptWebhook({
+      workflow_run_id: 33, transcript_url: localUrl,
+    })).status, "ok");
+    if (mode === "local") assert.equal(update["dograh.transcriptStatus"], "ready");
+    else assert.equal(update, undefined); // Existing error remains unchanged.
+    assert.equal(requests, mode === "local" ? 2 : 0);
+  }
+  assert.deepEqual(update["dograh.transcript"], parseDograhTranscriptText(raw));
+  delete process.env.DOGRAH_TRANSCRIPT_LOCAL_ORIGINS;
+  update = undefined;
+  await ingestDograhTranscriptWebhook({ workflow_run_id: 33, transcript_url: localUrl });
+  assert.equal(update, undefined);
+  assert.equal(requests, 2);
+});
 
 test("download preserves signed query, omits credentials, disables caching/redirects", async () => {
   const actual = await fetchDograhTranscript(url, hosts, async (source, options) => {
