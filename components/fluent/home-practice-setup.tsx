@@ -12,10 +12,9 @@ import {
   Utensils,
 } from "lucide-react";
 import { LanguageCard } from "@/components/fluent/language-card";
-import { SessionCard } from "@/components/fluent/session-card";
 import { TopicCard } from "@/components/fluent/topic-card";
 import { TutorCard } from "@/components/fluent/tutor-card";
-import type { Language, PracticeSessionSummary, Topic, Tutor } from "@/components/fluent/types";
+import type { Language, Topic, Tutor } from "@/components/fluent/types";
 import {
   practiceLanguages, practiceTopics, practiceTutors,
   practiceLevels as levels, practiceDurations as durations, practiceSessionHref,
@@ -23,14 +22,14 @@ import {
 } from "@/lib/practice/session";
 import { cn } from "@/lib/utils";
 
-// Presentation-only sample progress; allowed choices come from the shared domain config.
+// Presentation-only flags; allowed choices come from the shared domain config.
 const languagePresentation = {
-  english: { flag: "🇬🇧", level: "CEFR A2", progress: 68 },
-  japanese: { flag: "🇯🇵", level: "CEFR Beginner", progress: 24 },
-  korean: { flag: "🇰🇷", level: "CEFR Beginner", progress: 18 },
-  chinese: { flag: "🇨🇳", level: "CEFR Beginner", progress: 12 },
-  french: { flag: "🇫🇷", level: "CEFR A1", progress: 36 },
-  spanish: { flag: "🇪🇸", level: "CEFR A1", progress: 42 },
+  english: { flag: "🇬🇧" },
+  japanese: { flag: "🇯🇵" },
+  korean: { flag: "🇰🇷" },
+  chinese: { flag: "🇨🇳" },
+  french: { flag: "🇫🇷" },
+  spanish: { flag: "🇪🇸" },
 };
 const languages: Language[] = Object.values(practiceLanguages).map((language) => ({
   ...language, ...languagePresentation[language.id],
@@ -43,12 +42,6 @@ const topics: Topic[] = Object.values(practiceTopics).map((topic) => ({
   ...topic, icon: topicIcons[topic.id],
 }));
 const tutors: Tutor[] = Object.values(practiceTutors);
-
-const recentSessions: PracticeSessionSummary[] = [
-  { id: "restaurant", title: "Restaurant Conversation", language: "English", level: "A2", duration: "8 min", score: 82, icon: Utensils, iconClassName: "bg-orange-50 text-orange-500" },
-  { id: "travel", title: "Travel", language: "English", level: "A2", duration: "10 min", score: 76, icon: Plane, iconClassName: "bg-sky-50 text-sky-500" },
-  { id: "conversation", title: "Daily Conversation", language: "English", level: "A2", duration: "6 min", score: 85, icon: MessagesSquare, iconClassName: "bg-violet-50 text-violet-500" },
-];
 
 export function HomePracticeSetup({ userName }: { userName: string }) {
   const router = useRouter();
@@ -96,7 +89,7 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
         throw new Error(getPracticeSetupError(result));
       }
 
-      router.push(practiceSessionHref("voice-call", result.sessionId));
+      router.push(practiceSessionHref(result.sessionId));
     } catch (error) {
       setStartError(
         error instanceof Error
@@ -202,19 +195,6 @@ export function HomePracticeSetup({ userName }: { userName: string }) {
               </button>
             </aside>
           </div>
-        </div>
-      </section>
-
-      <section aria-labelledby="recent-heading">
-        <div className="mb-5 flex items-end justify-between gap-4">
-          <div>
-            <h2 id="recent-heading" className="text-2xl font-bold tracking-tight text-app-text">Recent practice</h2>
-            <p className="mt-1 text-sm text-app-muted">Review your latest sessions and progress.</p>
-          </div>
-          <button type="button" className="hidden text-sm font-semibold text-app-primary transition hover:text-indigo-700 sm:block">View all</button>
-        </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {recentSessions.map((session) => <SessionCard key={session.id} session={session} />)}
         </div>
       </section>
     </main>

@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createVoiceCall, type VoiceState } from "@/lib/dograh/call";
 import { isDograhWidget } from "@/lib/dograh/widget";
-import { practiceSessionHref, type PracticeSession } from "@/lib/practice/session";
+import type { PracticeSession } from "@/lib/practice/session";
 import type { CallEvent } from "@/lib/practice/call-state";
 
 async function saveEvent(sessionId: string, event: CallEvent) {
@@ -25,7 +24,6 @@ async function saveEvent(sessionId: string, event: CallEvent) {
 }
 
 export function useDograhWidget(session: PracticeSession) {
-  const router = useRouter();
   const controller = useRef<ReturnType<typeof createVoiceCall> | null>(null);
   const [state, setState] = useState<VoiceState>(() => ({
     status: session.status === "ready" ? "ready" : session.status === "completed" ? "completed" : "failed",
@@ -101,7 +99,6 @@ export function useDograhWidget(session: PracticeSession) {
           widget, durationMinutes: session.durationMinutes,
           save: (event) => saveEvent(session.id, event),
           change: (next) => { if (!disposed) setState(next); },
-          completed: () => router.replace(practiceSessionHref("review", session.id)),
           release,
         });
         setLoaded(true);
@@ -123,7 +120,7 @@ export function useDograhWidget(session: PracticeSession) {
       controller.current = null;
       release();
     };
-  }, [session, router]);
+  }, [session]);
 
   return { ...state, loaded, start: () => controller.current?.start(), end: () => controller.current?.end() };
 }

@@ -9,7 +9,6 @@ type Dependencies = {
   durationMinutes: number;
   save: (event: CallEvent) => Promise<void>;
   change: (state: VoiceState) => void;
-  completed: () => void;
   release: () => void;
   now?: () => number;
 };
@@ -22,7 +21,6 @@ export function createVoiceCall(deps: Dependencies) {
   let requestedEnd = false;
   let failure: "mic_denied" | "network_error" | "dropped" | undefined;
   let queue = Promise.resolve();
-  let saveFailed = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const now = deps.now ?? Date.now;
@@ -35,7 +33,6 @@ export function createVoiceCall(deps: Dependencies) {
     // A failed predecessor must prevent later events from overtaking it.
     queue = queue.then(() => deps.save(event));
     void queue.catch(() => {
-      saveFailed = true;
       change({ error: "Unable to save the call state. Check your connection before leaving this page." });
     });
     return queue;
@@ -66,7 +63,6 @@ export function createVoiceCall(deps: Dependencies) {
         ? { event: "error", endReason: failed ?? "dropped" }
         : { event: "disconnected", durationSeconds: elapsed,
           ...(failed ? { endReason: failed === "mic_denied" ? "dropped" : failed } : requestedEnd ? { endReason: "user_ended" as const } : {}) });
-      if (!disposed && normal && !saveFailed) deps.completed();
     } catch { /* save() exposes the persistence error; keep the user on this page. */ }
   };
   const end = (userEnded = true) => {

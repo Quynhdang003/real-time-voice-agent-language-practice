@@ -11,12 +11,12 @@ const { build } = tempRequire('esbuild');
 const { chromium } = tempRequire('playwright');
 function moduleFrom(file, dependencies = {}) {
   const js = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
-  const module = { exports: {} };
-  vm.runInNewContext(js, { exports: module.exports, module, require: (name) => {
+  const loadedModule = { exports: {} };
+  vm.runInNewContext(js, { exports: loadedModule.exports, module: loadedModule, require: (name) => {
     if (!(name in dependencies)) throw new Error('Unexpected module: '+name);
     return dependencies[name];
   }, console });
-  return module.exports;
+  return loadedModule.exports;
 }
 const domain = moduleFrom('lib/practice/session.ts');
 const documents = new Map();

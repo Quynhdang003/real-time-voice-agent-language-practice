@@ -20,7 +20,7 @@ try {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
       console.log(`PASS browser ${viewport.width}px ${path}: form visible, no horizontal overflow`);
     }
-    await page.goto(new URL("/review?sessionId=session-a", base).href);
+    await page.goto(new URL("/voice-call?sessionId=session-a", base).href);
     await page.waitForURL("**/sign-in");
     assert.deepEqual(errors, []);
     console.log(`PASS browser ${viewport.width}px: auth redirect, no uncaught page errors`);

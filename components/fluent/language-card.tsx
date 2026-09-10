@@ -33,7 +33,7 @@ export function LanguageCard({ language, selected, onSelect }: LanguageCardProps
           </div>
           <div>
             <h3 className="text-lg font-bold text-app-text">{language.name}</h3>
-            <p className="mt-1 text-sm text-app-muted">{language.level}</p>
+            <p className="mt-1 text-sm text-app-muted">Select to practice</p>
           </div>
         </div>
         {selected ? (
@@ -41,20 +41,6 @@ export function LanguageCard({ language, selected, onSelect }: LanguageCardProps
             <Check className="h-4 w-4" />
           </span>
         ) : null}
-      </div>
-      <div className="mt-6">
-        <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="font-medium text-app-muted">Learning progress</span>
-          <span className={cn("font-semibold", selected ? "text-app-primary" : "text-app-text")}>
-            {language.progress}%
-          </span>
-        </div>
-        <div className={cn("h-2 overflow-hidden rounded-full", selected ? "bg-indigo-100" : "bg-slate-100")}>
-          <div
-            className={cn("h-full rounded-full", selected ? "bg-app-primary" : "bg-slate-300")}
-            style={{ width: `${language.progress}%` }}
-          />
-        </div>
       </div>
     </button>
   );

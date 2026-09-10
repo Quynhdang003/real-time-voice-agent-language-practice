@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Lightbulb, Mic, MicOff, Phone, PhoneOff, ScrollText, Sparkles, UserRound } from "lucide-react";
+import { House, Lightbulb, Mic, MicOff, Phone, PhoneOff, Sparkles, UserRound } from "lucide-react";
 import { useDograhWidget } from "@/components/fluent/use-dograh-widget";
 import { SessionBadges } from "@/components/fluent/session-badges";
 import { TutorAvatar } from "@/components/fluent/tutor-avatar";
 import { UserAvatar } from "@/components/fluent/user-avatar";
-import { practiceSessionHref, type PracticeSession } from "@/lib/practice/session";
+import type { PracticeSession } from "@/lib/practice/session";
 import type { SessionLearner } from "@/lib/practice/read-session";
 
 export function VoiceCallExperience({ session, learner }: { session: PracticeSession; learner: SessionLearner }) {
@@ -80,10 +80,12 @@ export function VoiceCallExperience({ session, learner }: { session: PracticeSes
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-3 rounded-2xl border border-app-border bg-white p-3 shadow-card sm:gap-4 sm:p-4">
           {call.status === "ready" ? <button type="button" onClick={call.start} disabled={!call.loaded} className="flex h-[60px] min-w-[156px] items-center justify-center gap-2 rounded-xl bg-app-primary px-5 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"><Phone className="h-5 w-5" />Start Call</button> : null}
           {busy ? <button type="button" onClick={call.end} disabled={call.status === "ending"} className="flex h-[60px] min-w-[156px] items-center justify-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"><PhoneOff className="h-5 w-5" />{call.status === "ending" ? "Ending…" : "End Call"}</button> : null}
-          {!busy ? <Link href={practiceSessionHref("review", session.id)} className="flex h-[60px] min-w-[156px] items-center justify-center gap-2 rounded-xl border border-app-border px-5 text-sm font-bold text-app-primary hover:bg-indigo-50 focus:outline-none focus:ring-4 focus:ring-indigo-200">
-            <ScrollText className="h-5 w-5" />View review
-          </Link> : <span className="px-4 font-mono text-xl font-semibold text-app-text" aria-label="Time remaining">{timer}</span>}
-          {!busy && call.status !== "ready" ? <Link href="/" className="px-4 py-3 text-sm font-semibold text-app-primary">New practice session</Link> : null}
+          {busy ? <span className="px-4 font-mono text-xl font-semibold text-app-text" aria-label="Time remaining">{timer}</span> : null}
+          {call.status === "completed" || call.status === "failed" ? (
+            <Link href="/" className="flex h-[60px] min-w-[156px] items-center justify-center gap-2 rounded-xl border border-app-border px-5 text-sm font-bold text-app-primary hover:bg-indigo-50 focus:outline-none focus:ring-4 focus:ring-indigo-200">
+              <House className="h-5 w-5" />Back to Home
+            </Link>
+          ) : null}
         </div>
       </section>
     </main>

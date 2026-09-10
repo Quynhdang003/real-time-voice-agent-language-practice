@@ -14,7 +14,6 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "patch-package --error-on-fail",
-    "test:dograh-transcript": "node --test tests/dograh-transcript.test.mjs",
     "test:firebase-runtime": "node --no-experimental-require-module --test tests/firebase-runtime.test.mjs",
     "test:practice-session": "node --test tests/practice-session.test.mjs",
     "test:dograh-call": "node --experimental-strip-types --test tests/dograh-call.test.mjs"
@@ -24,7 +23,6 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
-    "@google/genai": "^2.18.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.18.0",

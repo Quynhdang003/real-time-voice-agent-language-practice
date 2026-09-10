@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./helpers/load-ts.mjs";
-import { setup, document, review, completed } from "./helpers/fixtures.mjs";
+import { setup, document, completed } from "./helpers/fixtures.mjs";
 const domain = loadTs("lib/practice/session.ts");
 const { readPracticeSession } = loadTs("lib/practice/read-session.ts");
 const { applyPracticeSessionCallEvent, parseCallEvent } = loadTs("lib/practice/call-state.ts");
@@ -18,13 +18,17 @@ test("setup and session IDs reject invalid values", () => {
     assert.equal(domain.parsePracticeSetup(value), null);
   for (const id of [undefined, "", "../a", "a/b", "a".repeat(129), 12]) assert.equal(domain.isPracticeSessionId(id), false);
 });
-test("session DTO includes validated review but strips ownership and extra fields", () => {
-  const result = domain.parsePracticeSession("session-a", completed({ review, reviewStatus: "completed", secret: "private" }));
-  assert.deepEqual(result.review, review);
-  assert.equal(result.reviewStatus, "completed");
+test("session DTO strips ownership, extra data and retired transcript/review fields", () => {
+  const result = domain.parsePracticeSession("session-a", completed({
+    dograh: { workflowRunId: 31, transcriptStatus: "ready", transcript: [{ role: "learner", text: "legacy", at: "00:01" }] },
+    review: { overallScore: 80 }, reviewStatus: "completed", secret: "private",
+  }));
+  assert.equal("review" in result, false);
+  assert.equal("reviewStatus" in result, false);
+  assert.equal("transcript" in result.dograh, false);
+  assert.equal("transcriptStatus" in result.dograh, false);
   assert.equal("userId" in result, false);
   assert.equal("secret" in result, false);
-  assert.equal(domain.parsePracticeSession("session-a", completed({ review: { ...review, overallScore: 101 } })), null);
 });
 test("session reader enforces authentication, ownership and data validity", async () => {
   for (const [user, id, doc, expected] of [
