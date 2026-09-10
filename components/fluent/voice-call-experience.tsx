@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import { Captions, Lightbulb, Mic, MicOff, Phone, PhoneOff, ScrollText, Sparkles, UserRound } from "lucide-react";
+import { Lightbulb, Mic, MicOff, Phone, PhoneOff, ScrollText, Sparkles, UserRound } from "lucide-react";
 import { useDograhWidget } from "@/components/fluent/use-dograh-widget";
 import { SessionBadges } from "@/components/fluent/session-badges";
 import { TutorAvatar } from "@/components/fluent/tutor-avatar";
@@ -11,7 +10,6 @@ import { practiceSessionHref, type PracticeSession } from "@/lib/practice/sessio
 import type { SessionLearner } from "@/lib/practice/read-session";
 
 export function VoiceCallExperience({ session, learner }: { session: PracticeSession; learner: SessionLearner }) {
-  const [showTranscript, setShowTranscript] = useState(true);
   const call = useDograhWidget(session);
   const busy = ["connecting", "active", "ending"].includes(call.status);
   const active = call.status === "active";
@@ -71,19 +69,6 @@ export function VoiceCallExperience({ session, learner }: { session: PracticeSes
             <div className="mt-5 inline-flex h-10 items-center rounded-full border border-app-border bg-slate-50 px-4 text-sm font-semibold text-app-muted">{active ? "Speak naturally with your tutor" : busy ? "Preparing voice connection" : call.status === "ready" ? "Ready to practice" : "Practice ended"}</div>
           </div>
         </article>
-      </section>
-
-      <section className="mt-5 rounded-2xl border border-app-border bg-white p-5 shadow-card sm:p-6" aria-labelledby="transcript-heading">
-        <header className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-app-primary-light text-app-primary"><Captions className="h-4 w-4" /></div>
-            <h2 id="transcript-heading" className="text-sm font-semibold text-app-text">Conversation transcript</h2>
-          </div>
-          <button type="button" onClick={() => setShowTranscript((current) => !current)} aria-expanded={showTranscript} aria-controls="session-transcript" className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-app-border px-3 text-sm font-semibold text-app-muted hover:border-indigo-300 focus:outline-none focus:ring-4 focus:ring-indigo-100">
-            <ScrollText className="h-4 w-4" />{showTranscript ? "Hide transcript" : "Show transcript"}
-          </button>
-        </header>
-        {showTranscript ? <p id="session-transcript" className="mt-5 border-t border-app-border pt-5 text-sm leading-7 text-app-muted">Conversation transcripts are not yet available in this app.</p> : null}
       </section>
 
       <section className="mt-4 flex items-start gap-3 rounded-xl border border-indigo-100 bg-app-primary-light px-4 py-3.5">

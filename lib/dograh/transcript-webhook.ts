@@ -1,4 +1,6 @@
 import { isRecord } from "@/lib/practice/session";
+import type { TranscriptStatus, TranscriptTurn } from "@/lib/practice/session";
+import { parseDograhTranscriptText } from "./transcript-parser";
 
 const MAX_SUMMARY_LENGTH = 4000;
 
@@ -24,8 +26,6 @@ function toRunId(value: unknown): number | null {
   return Number.isSafeInteger(runId) && runId > 0 ? runId : null;
 }
 
-// Field names follow docs.dograh.com/developer/webhooks payload_template variables.
-// transcript_url/recording_url are public download links, never inline content.
 export function parseDograhWebhookEvent(value: unknown): DograhTranscriptEvent | null {
   if (!isRecord(value)) return null;
   const workflowRunId = toRunId(value.workflow_run_id);
@@ -47,13 +47,18 @@ export function parseDograhWebhookEvent(value: unknown): DograhTranscriptEvent |
   return event;
 }
 
-export type TranscriptPatch = { transcriptUrl?: string; recordingUrl?: string; summary?: string };
+export type TranscriptPatch = {
+  transcriptUrl?: string; recordingUrl?: string; summary?: string;
+  transcript?: TranscriptTurn[]; transcriptStatus?: TranscriptStatus;
+};
 export type TranscriptApplyResult =
   | { status: "ok"; changed: boolean }
   | { status: "not_found" | "invalid_payload" | "unavailable" };
 
 type TranscriptStore = {
   findSessionByRunId: (runId: number) => Promise<{ sessionId: string; dograh?: TranscriptPatch } | null>;
+  // May throw; a download/parse failure must not crash the whole webhook.
+  fetchTranscript: (url: string) => Promise<string>;
   writePatch: (sessionId: string, patch: TranscriptPatch) => Promise<void>;
   onError: (error: unknown) => void;
 };
@@ -72,9 +77,28 @@ export async function applyDograhTranscriptEvent(
     if (event.recordingUrl !== undefined) patch.recordingUrl = event.recordingUrl;
     if (event.summary !== undefined) patch.summary = event.summary;
 
-    // A retried webhook with identical data is a harmless no-op, never an error.
+    // A duplicate delivery must not redownload an expired signed URL or
+    // downgrade a transcript already downloaded successfully.
+    const alreadyDownloaded = match.dograh?.transcriptUrl === event.transcriptUrl &&
+      Array.isArray(match.dograh?.transcript) &&
+      (match.dograh?.transcriptStatus === "ready" || match.dograh?.transcriptStatus === "empty");
+    if (event.transcriptUrl !== undefined && !alreadyDownloaded) {
+      try {
+        const raw = await store.fetchTranscript(event.transcriptUrl);
+        const turns = parseDograhTranscriptText(raw);
+        patch.transcript = turns;
+        patch.transcriptStatus = turns.length > 0 ? "ready" : "empty";
+      } catch (error) {
+        store.onError(error);
+        patch.transcriptStatus = "error";
+      }
+    }
+
     const unchanged = match.dograh !== undefined &&
-      (Object.keys(patch) as (keyof TranscriptPatch)[]).every((key) => match.dograh?.[key] === patch[key]);
+      (Object.keys(patch) as (keyof TranscriptPatch)[]).every((key) =>
+        key === "transcript"
+          ? JSON.stringify(match.dograh?.transcript) === JSON.stringify(patch.transcript)
+          : match.dograh?.[key] === patch[key]);
     if (unchanged) return { status: "ok", changed: false };
 
     await store.writePatch(match.sessionId, patch);

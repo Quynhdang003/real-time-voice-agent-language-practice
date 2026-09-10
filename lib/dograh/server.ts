@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/firebase/admin";
 import { isRecord } from "@/lib/practice/session";
 import { applyDograhTranscriptEvent } from "./transcript-webhook";
+import { fetchDograhTranscript } from "./fetch-transcript";
 
 // Debug/verification primitive only. Do not expose raw provider data through a browser route.
 export async function getDograhRun(runId: number): Promise<unknown> {
@@ -27,6 +28,11 @@ export async function getDograhRun(runId: number): Promise<unknown> {
 }
 export async function ingestDograhTranscriptWebhook(rawBody: unknown) {
   return applyDograhTranscriptEvent(rawBody, {
+    fetchTranscript: (url) => fetchDograhTranscript(
+      url,
+      (process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS ?? "app.dograh.com")
+        .split(",").map((host) => host.trim()).filter(Boolean),
+    ),
     findSessionByRunId: async (runId) => {
       const snapshot = await adminDb.collection("practiceSessions")
         .where("dograh.workflowRunId", "==", runId).limit(1).get();

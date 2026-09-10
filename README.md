@@ -20,6 +20,39 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Dograh transcript webhook
+
+Configure Dograh to POST its transcript event to
+`/api/dograh/transcript-webhook` with the `x-dograh-webhook-secret` header matching
+the server's `DOGRAH_WEBHOOK_SECRET`.
+
+Set `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` to comma-separated exact, trusted hostnames
+from your actual Dograh `transcript_url` storage URLs (no scheme, path, or
+wildcards). The default is `app.dograh.com`; if Dograh uses another storage host,
+add that host explicitly before testing. Only configure provider-controlled
+public hosts, never localhost or internal services. Downloads require HTTPS,
+reject redirects, time out after 15 seconds, and accept at most 256 KiB.
+Signed query parameters are preserved; API keys are not sent to storage.
+
+For a known workflow run, the webhook stores parsed turns in `dograh.transcript`
+and sets `dograh.transcriptStatus` to `ready`, `empty`, or `error`. A repeated
+delivery of the same successfully downloaded URL reuses the stored transcript.
+Failed downloads can be retried by redelivering the webhook (use a fresh signed
+URL if expired). Download failures are stored as `error` and acknowledged with
+HTTP 200; there is no automatic background retry.
+
+Run `npm run test:dograh-transcript` for isolated download/parser/webhook tests.
+Also verify a real call on staging: its run ID must already be saved on the
+practice session when the webhook arrives. Unknown runs are acknowledged and
+skipped; they are not queued for later ingestion.
+
+## Testing
+
+Run `npm test` for all automated tests, then `npm run lint`,
+`npx tsc --noEmit`, and `npm run build`. Use Node.js 24.x for release validation.
+See [the test plan and execution report](docs/TESTING.md) for coverage,
+known failures, and the staging checks that require real services.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
