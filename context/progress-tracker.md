@@ -29,7 +29,17 @@ change.
 - DEP-01 done on 2026-11-13 (C-20). Production:
   `https://real-time-voice-agent-language-prac-one.vercel.app`. The user's
   manual checks are I-03.
-- Next units: DG-05 → DC-01 → ACC-01 → ACC-02 → ACC-03 → LIM-01 → TR-01.
+- Batches (decided 2026-11-13, at most 4 units each):
+  1. DG-05, the repo part of DC-01, and the 1-minute trial guidance in the
+     workflow spec (moved from ACC-01, so the user imports the workflows
+     once). **Code done 2026-11-13** on branch
+     `feat/dg-05-server-widget-url` (DG-05 = C-21; DC-01 repo part = I-02).
+     After the user merges it, DC-01 continues with the user's Dograh Cloud
+     setup and real calls.
+  2. ACC-01, ACC-02, ACC-03, LIM-01. This is code only, so it can run while
+     the user sets up Dograh Cloud (I-02).
+  3. DC-02, TR-01, TR-02, TR-03. They need the Dograh Cloud workflows running.
+  4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
   instances that are gone now.
@@ -251,36 +261,73 @@ without mocks.
   - The `production` branch (`b4c06f5`) is deleted locally and on `origin`;
     `git ls-remote origin production` is empty (fixes N-07).
   - Remaining manual checks by the user: I-03.
+- **C-21** DG-05 server-only embed URLs (2026-11-13, batch 1):
+  - `lib/dograh/widget.ts`:
+    - `widgetSourceVariable(accent)` maps to `DOGRAH_WIDGET_SRC_AMERICAN` /
+      `_BRITISH`;
+    - `selectWidgetSource(session, env)` returns the trimmed URL only for a
+      `ready` session (v1 → American).
+  - `app/(root)/voice-call/page.tsx` reads `process.env` at request time,
+    after `getPracticeSession` has checked ownership, and passes the
+    `widgetSrc` prop. `VoiceCallExperience` and `useDograhWidget` take it.
+  - The hook no longer reads `process.env`. A missing URL shows "Set
+    DOGRAH_WIDGET_SRC_<ACCENT> on the server, then restart or redeploy the
+    app."
+  - Verify:
+    - `tests/dograh-widget-source.test.mjs` (4 tests: accent choice and
+      legacy default; no URL unless `ready`; blank or missing variable; no
+      `NEXT_PUBLIC_DOGRAH` in `app/`, `components/` or `lib/`, and no
+      `process.env` in the hook);
+    - `npm test` 67/67; typegen + `tsc` pass;
+    - **canary build:** `npm run build` with `DOGRAH_WIDGET_SRC_*` holding
+      marker tokens → 0 files in `.next/static` contain the marker or
+      `dograh-widget.js`. The marker appears only in the local Turbopack
+      cache, which is never served.
+  - The real call with the new variables is checked in DC-01 (I-02).
 
 ## In Progress
 
 - **I-01** Implemented, awaiting a real-service check (staging case E01):
   registration + profile document, sign-out, password-reset email,
   profile-photo upload. Run it on the deployment after DEP-01.
-- **I-02** Manual Dograh Cloud setup by the user. DC-01 rewrites
-  `dograh/README.md` with these steps; the self-hosted steps (`dograh/.env`,
-  `dograh:up`, sign-up) are no longer needed.
-  1. Sign in at `https://app.dograh.com` and configure the providers (LLM,
-     STT, TTS).
-  2. Create an API key. Put `DOGRAH_API_KEY` and
-     `DOGRAH_API_BASE_URL=https://app.dograh.com` in `.env.local`, then run
-     `dograh:seed` + `dograh:import` ×2.
-  3. Set the TTS voice per workflow (American, British) and the
-     `bearer_token` credential (= the Vercel `DOGRAH_WEBHOOK_SECRET`). Set the
-     Webhook node endpoint to
-     `https://<production-domain>/api/dograh/transcript-webhook`, and keep the
-     node disabled until TR-01 is deployed.
-  4. Publish both workflows. Create one embed token per workflow with allowed
-     domains `<production-domain>` and `localhost:3000`.
-  5. Put both widget URLs in `.env.local` and in the Vercel project as the
-     server-only `DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH` (after DG-05),
-     then restart Next.js and redeploy.
-  6. Make a real call per accent on the deployment and on `localhost:3000`,
-     then `dograh:export` ×2.
+- **I-02** DC-01, Dograh Cloud.
+  - **Repo part done in batch 1 (2026-11-13):**
+    - `dograh/workflow-spec.md`:
+      - header and embed variables for Cloud;
+      - webhook endpoint
+        `https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook`;
+      - per-workflow settings for Cloud (allowed domains = production
+        domain + `localhost:3000`, server-only variables, a maximum call
+        duration of 20 minutes if offered, an `apiEndpoint` note for local
+        calls);
+      - the **1-minute trial guidance**: a global "Session length" rule, and
+        the practice → wrap-up edge moving on after 2–3 answers in a trial.
+    - Seed regenerated (`WEBHOOK_URL` in `build-seed-workflow.mjs`).
+    - `dograh/scripts/lib.mjs` defaults to `https://app.dograh.com`.
+    - `.env.example` lists `DOGRAH_WIDGET_SRC_*` and the Cloud API base.
+    - `dograh/README.md` rewritten in Vietnamese as the Cloud guide (steps
+      1–5 plus troubleshooting).
+    - The root README's Dograh section points to Cloud.
+    - Verify: `tests/dograh-workflow.test.mjs` 3/3 (placeholders, webhook
+      disabled with the new URL, seed = spec).
+  - **Remaining, by the user** (`dograh/README.md` §1–5): providers, API key,
+    import ×2, voices, the `bearer_token` credential (= the Vercel
+    `DOGRAH_WEBHOOK_SECRET`), keep the webhook node disabled, publish, embed
+    tokens, `DOGRAH_WIDGET_SRC_*` on Vercel (redeploy) and in `.env.local`,
+    then a real call per accent on the deployment and on `localhost:3000`.
+  - The user reports four observations, which go into "Observed on Dograh
+    Cloud":
+    - the `/embed/init` host;
+    - whether `apiEndpoint` is needed locally;
+    - the transcript storage host (→ `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`);
+    - whether a spending limit or maximum duration exists.
+
+    Then `dograh:export` ×2.
 - **I-03** DEP-01 manual checks by the user, on
   `https://real-time-voice-agent-language-prac-one.vercel.app`:
   - sign in, then create a v2 practice session (`/voice-call` reporting that
-    voice calling is not configured is expected until DG-05/DC-01);
+    voice calling is not configured is expected until `DOGRAH_WIDGET_SRC_*`
+    are set in DC-01);
   - the Vercel Logs for `/` and `/sign-in` show no `ERR_REQUIRE_ESM`;
   - a Preview deployment URL asks for a Vercel login;
   - Settings → General shows Node.js 24.x (the build log does not print it);
@@ -297,12 +344,11 @@ Rules for every unit:
 
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
-| **DG-05** | Server-only embed script URLs (decided 2026-11-13). Rename `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH` to `DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH`. The `/voice-call` server component picks the URL by the session's accent (v1 → American) and passes it to `VoiceCallExperience` only for the owner's session in `ready` status, the only status that can start a call. `use-dograh-widget.ts` takes it as a prop and keeps the URL checks and the error that names the missing variable. Update `.env.example` and the README. Done before DC-01, so the user sets each variable once, under its final name | DEP-01 | Tests: URL chosen by accent; no URL for a session that is not `ready`, or for another user's session; a missing variable gives the named error. After `npm run build`, no `dograh-widget.js` or `token=` string in `.next/static`. The real call is checked in DC-01 |
-| **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint and embed steps; `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **ACC-01** | Access model and trial, server side (`api-contracts.md` → Access and trial). Spec first: `workflow-spec.md` tells the tutor how to run a 1-minute session (greeting and 2–3 short exchanges). Then: `lib/practice/access.ts` (pure rules, `isAdmin`), `access-server.ts`; `users/{uid}.access`; session `kind` and the 1-minute trial in the `practice-setup` transaction; 403 `access_required`; v2 parser reads `kind` (missing → `full`) and `durationMinutes: 1` only for trial; `ADMIN_UID` in `.env.example` and on Vercel | DC-01 | Tests: first setup → trial session, `trialUsed` set; second → 403 with no write; approved → full; admin → full; concurrent trial setups create one session; `kind` in the body ignored; old v2 sessions still parse |
+| **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
+| **ACC-01** | Access model and trial, server side (`api-contracts.md` → Access and trial). The workflow-spec guidance for a 1-minute session is done earlier, with DC-01 in batch 1. Code: `lib/practice/access.ts` (pure rules, `isAdmin`), `access-server.ts`; `users/{uid}.access`; session `kind` and the 1-minute trial in the `practice-setup` transaction; 403 `access_required`; v2 parser reads `kind` (missing → `full`) and `durationMinutes: 1` only for trial; `ADMIN_UID` in `.env.example` and on Vercel | DC-01 | Tests: first setup → trial session, `trialUsed` set; second → 403 with no write; approved → full; admin → full; concurrent trial setups create one session; `kind` in the body ignored; old v2 sessions still parse |
 | **ACC-02** | Learner side: `POST /api/access-request`; access banner on `/` (trial available, trial used, pending, rejected, approved); trial form without the duration choice; 403 handling | ACC-01 | Route tests (401/400/409/200, `none`/`rejected` → `pending`); on the deployment, a new account sees the trial, makes a 1-minute call that gets reviewed, then sends a request |
 | **ACC-03** | Admin side: `/admin` page (pending and approved lists), `POST /api/admin/access/[uid]` (approve/reject/revoke), header link with the pending count, admin-only | ACC-02 | Tests: non-admin → 404 on the page and the route; each transition and invalid one (409); a decision about `ADMIN_UID` → 409. On the deployment: approve → the learner creates a full session; revoke → 403 again |
-| **LIM-01** | Daily call limit for approved learners (`api-contracts.md` → Daily call limit). Pure rules in `lib/practice/call-quota.ts`; `users/{uid}.callQuota` checked and incremented in the ACC-01 transaction; 429 `call_limit_reached`; calls left and reset time on `/`; admin exempt; `PRACTICE_DAILY_CALL_LIMIT` in `.env.example` and on Vercel. Share the production URL with other people only after this unit | ACC-03, Open Question 11 (default) | Tests: under the limit → session created and `used` + 1; at the limit → 429 with no session and no write; a new day resets; concurrent requests never pass the limit; invalid env → default. On the deployment, the limit is reached and the form shows it |
+| **LIM-01** | Daily call limit for approved learners (`api-contracts.md` → Daily call limit). Pure rules in `lib/practice/call-quota.ts`; `users/{uid}.callQuota` checked and incremented in the ACC-01 transaction; 429 `call_limit_reached`; calls left and reset time on `/`; admin exempt; `PRACTICE_DAILY_CALL_LIMIT` (default 5) in `.env.example` and on Vercel. Share the production URL with other people only after this unit | ACC-03 | Tests: under the limit → session created and `used` + 1; at the limit → 429 with no session and no write; a new day resets; concurrent requests never pass the limit; invalid env → default. On the deployment, the limit is reached and the form shows it |
 | **DC-02** | Delete the retired self-hosted stack (confirmed 2026-11-13): `dograh/docker-compose.yml`, `dograh/.env.example`, `backup.ps1` / `restore.ps1`, the `dograh:up|down|logs|backup` scripts, the `local` transcript mode and its variables; update README, tests and context | DC-01 | `npm test`, build and lint pass; no `localhost:8020`, `fluentai-dograh` or `DOGRAH_TRANSCRIPT_MODE` left in code or docs |
 | **TR-01** | Webhook v2: Bearer auth, flat payload, `""` means absent, lookup by `session_id`, run cross-check, idempotent transaction; remove `getDograhRun` / `DOGRAH_WORKFLOW_ID` (fixes N-01a,c,d,e). Then enable the Webhook node in both Cloud workflows | DC-01 | Wrong Bearer → 401; redelivery is a no-op; an old session with the same run ID is untouched; on the deployment, a real Cloud delivery is linked by `session_id` |
 | **TR-02** | Download reason codes (`transcriptError`); 503 for transient failures until the final attempt; public mode follows ≤ 3 redirects, each hop validated against the allowlist (fixes N-01b, N-01f) | TR-01 | Tests per reason code and per redirect case (allowed, off-list, too many hops); on the deployment, a real Cloud transcript reaches `ready` |
@@ -392,7 +438,8 @@ stated otherwise
   - `dograh/README.md` describes the Docker stack.
   - The README's Dograh section points to the stack.
 
-  Fixed by DC-01; the stack files themselves go in DC-02.
+  **Fixed 2026-11-13 (DC-01 repo part, batch 1).** The stack files themselves
+  go in DC-02.
 
 ## Open Questions
 
@@ -421,10 +468,6 @@ stated otherwise
    the Firebase console?
 10. For C2 sessions, the skill score 5 is assumed to mean "consistently at the
     top of C2 (near-native)". Confirm or adjust.
-11. LIM-01: how many calls per approved learner per day? Proposed default: 5
-    (each ≤ 20 minutes, so ≤ 100 minutes per learner per day). The value can
-    be changed on Vercel through `PRACTICE_DAILY_CALL_LIMIT`. LIM-01 uses 5
-    until this is answered.
 
 **Resolved on 2026-11-13** (answers by the user; details in Architecture
 Decisions):
@@ -435,6 +478,13 @@ Decisions):
 - Cost → registration stays open; calls are limited per learner per day
   (LIM-01).
 - Vercel plan → Hobby; `maxDuration = 60`.
+- Daily call limit (LIM-01) → 5 calls per approved learner per day
+  (`PRACTICE_DAILY_CALL_LIMIT` default 5).
+- New UI text (trial banner, `/admin`) → English, like the current UI.
+- Delivery → batches of at most 4 units, one branch and one PR per batch.
+  Each unit keeps its own context update, checks and commit. The user allows
+  committing and pushing the batch branch, but not pushing to `main`, merging,
+  or changing external configuration.
 - Access model (ACC-01…ACC-03), all proposed defaults accepted:
   - a. one trial call per account in total;
   - b. the trial uses the normal setup form without the duration choice, and

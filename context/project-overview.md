@@ -187,7 +187,7 @@ part of the target since 2026-11-13.
 
 - Registration stays open. To control cost, each **approved** learner can
   start a limited number of full calls per day (`PRACTICE_DAILY_CALL_LIMIT`,
-  proposed default 5). The day is the calendar day in `Asia/Ho_Chi_Minh`.
+  default 5). The day is the calendar day in `Asia/Ho_Chi_Minh`.
   Trial calls are covered by the trial rule above. The admin is exempt.
 - One practice session allows one call, so each created session uses one call
   from the limit. A call that fails is not given back, because call events
