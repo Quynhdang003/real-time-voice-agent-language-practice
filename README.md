@@ -20,6 +20,15 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Dograh (self-hosted voice tutor)
+
+FluentAI runs its own Dograh 1.50.0 stack from [`dograh/`](dograh/README.md):
+UI `http://localhost:3020`, API `http://localhost:8020`, MinIO `http://localhost:9020`.
+Start it with `npm run dograh:up`, build the two tutor workflows (American and British) from
+[`dograh/workflow-spec.md`](dograh/workflow-spec.md), and copy the variable names from
+[`.env.example`](.env.example) into `.env.local`. The details below describe the current transcript
+webhook; with the new stack the local origins are `http://localhost:8020,http://localhost:9020`.
+
 ## Dograh transcript webhook
 
 Configure Dograh to POST its transcript event to
@@ -92,20 +101,63 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Deploy on Vercel
 
-Use Node.js 24.x (also declared in `package.json`) and install dependencies with
-`npm ci`. The `postinstall` script applies `patches/jwks-rsa+4.1.0.patch`; do not
-disable install scripts. Include the patch file with the deployment source.
+Production is a Vercel project on the Hobby plan that builds the `main` branch and
+serves it on the project's default `<project>.vercel.app` domain. Development keeps
+running on `localhost:3000` with `.env.local`; both use the same Firebase project.
+Background and limits: [`context/architecture.md`](context/architecture.md) →
+"Deployment (Vercel)".
 
-This patch loads `jose` via dynamic import in both JWKS key retrieval and the
-Passport integration, so Firebase Admin can start when the serverless runtime
-disables synchronous `require(ESM)`. The `jwks-rsa` override pins the version the
-patch targets. Revisit both when an upstream release fixes these imports.
-See [upstream issue](https://github.com/auth0/node-jwks-rsa/issues/507).
+### 1. Create the project (once)
 
+1. In the Vercel dashboard: **Add New → Project**, import this GitHub repository.
+   Framework preset **Next.js**, root directory = repository root.
+2. **Build and Output Settings:** keep the build command (`next build`); set the
+   install command to `npm ci`, so the lockfile and the `jwks-rsa` override are used
+   exactly. Do not disable install scripts: `postinstall` applies the patch below.
+3. **Settings → General → Node.js Version:** `24.x` (also `engines` in `package.json`).
+4. **Settings → Git → Production Branch:** `main`. Other branches get Preview
+   deployments.
+5. **Settings → Deployment Protection:** keep Vercel Authentication on for Preview
+   deployments (the default). Dograh never posts to Preview URLs.
+
+### 2. Environment variables
+
+Set these for **Production** and **Preview** (Settings → Environment Variables).
+A change applies only to new deployments: redeploy after editing.
+
+| Variable | Value |
+| --- | --- |
+| `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | Same as `.env.local`. The private key may keep its `\n` escapes; `firebase/admin.ts` turns them into newlines |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Same as `.env.local` |
+| `DOGRAH_WEBHOOK_SECRET` | A new random value (e.g. 32 random bytes as hex). DC-01 puts the same value in the Dograh Cloud `bearer_token` credential |
+| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com` (DC-01 adds the storage host) |
+
+Do **not** set `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS`,
+`DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL`, `DOGRAH_WORKFLOW_ID` or any `DOGRAH_*`
+variable of the retired Docker stack on Vercel. The Dograh widget URLs are added in
+DC-01; until then `/voice-call` reports that voice calling is not configured.
+
+### 3. Firebase
+
+Firebase console → **Authentication → Settings → Authorized domains** → add
+`<project>.vercel.app`.
+
+### 4. Verify
+
+```bash
+TEST_BASE_URL=https://<project>.vercel.app npm run test:smoke
+```
+
+In PowerShell: `$env:TEST_BASE_URL="https://<project>.vercel.app"; npm run test:smoke`.
+Then open `/` and `/sign-in` and check the project's Logs for `ERR_REQUIRE_ESM`, sign in
+and create a practice session, and confirm that a Preview URL asks for a Vercel login.
+
+### Firebase Admin patch
+
+`patches/jwks-rsa+4.1.0.patch` loads `jose` via dynamic import in both JWKS key
+retrieval and the Passport integration, so Firebase Admin can start when the
+serverless runtime disables synchronous `require(ESM)`. The `jwks-rsa` override pins
+the version the patch targets. Revisit both when an upstream release fixes these
+imports. See [upstream issue](https://github.com/auth0/node-jwks-rsa/issues/507).
 Run `npm run test:firebase-runtime` to check Firebase Auth imports and signing-key
-retrieval with `require(ESM)` disabled, then `npm run build`. After deploying,
-check `/` and `/sign-in` in the Function logs for `ERR_REQUIRE_ESM`.
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+retrieval with `require(ESM)` disabled, then `npm run build`.
