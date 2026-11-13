@@ -27,7 +27,7 @@ S = session cookie required. All routes below are S.
 
 | Route | | Success | Errors |
 |---|---|---|---|
-| `POST /api/practice-setup` `{profile, setup}` (below) | S | 201 `{success: true, sessionId}`; a v2 document is created with `status: "ready"` and `userId` from the cookie | 401 (checked before the body is read), 400 invalid JSON, 400 `{success: false, message, fieldErrors}`, 500 Firestore write failed |
+| `POST /api/practice-setup` `{profile, setup}` (below) | S | 201 `{success: true, sessionId}`; a v2 document is created with `status: "ready"`, `kind` and `userId` from the cookie (ACC-01) | 401 (checked before the body is read), 400 invalid JSON, 400 `{success: false, message, fieldErrors}`, 403 `{success: false, message, reason: "access_required", accessStatus}` (trial used, not approved), 500 `unavailable` |
 | `PUT /api/learner-profile` (below) | S | 200 `{success: true, profile}` | 401, 400 invalid JSON, 400 `fieldErrors`, 500 |
 | `POST /api/practice-session/[sessionId]/call-event` (body below) | S | 200 `{success: true}`; also for a repeated identical event (no write) | 401, 400 invalid JSON, 400 `invalid_id`, 400 `invalid_update`, 404 `not_found`, 409 `conflict`, 500 `invalid_data` (stored document fails parsing), 500 `unavailable` |
 | `POST /api/practice-session/[sessionId]/generate-review` (no body) | S | 200 `{success: true, review}`; a newly generated review, or the saved one when `reviewStatus` is already `completed` | `{success: false, message, reason}`: 401 `unauthenticated`, 400 `invalid_id`, 404 `not_found`, 500 `invalid_data`, 409 `not_ready` (call not `completed`), 409 `transcript_pending`, 409 `transcript_empty`, 409 `transcript_error`, 409 `already_processing`, 503 `quota`, 500 `invalid_output`, 500 `unavailable` |
@@ -167,11 +167,13 @@ Moved to "Web API" above. Still pending:
 - **ACC-01** decides the session kind from the account's access (below).
 - **LIM-01** adds the daily call limit for full sessions (below).
 
-### Access and trial in `POST /api/practice-setup` (ACC-01)
+### Access and trial in `POST /api/practice-setup` — implemented (ACC-01)
+
+Implemented in `lib/practice/create-session.ts` (`createPracticeSessionForUser`, pure), with its adapter `createPracticeSession` in `lib/practice/server.ts`. The route maps `ok` → 201, `invalid` → 400, `access_required` → 403 and `unavailable` → 500. The client side (the banner and the trial form) is still ACC-02.
 
 Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it needs the single admin's approval.
 
-- Order: auth → parse → read the access level → `validatePracticeSetupRequest(body, {kind})` → one Firestore transaction. For `kind: "trial"`, the validator ignores `durationMinutes`. All other field rules are unchanged.
+- Order: auth → parse JSON → one Firestore transaction. Inside it: read `users/{uid}` → access level → `validatePracticeSetupRequest(body, {kind})` → writes. For `kind: "trial"`, the validator ignores `durationMinutes`. All other field rules are unchanged. A blocked account gets 403 before its body is validated. Invalid input gets 400 without using the trial.
 - The transaction reads `users/{uid}` (`access`, `callQuota`) and decides:
 
   | Account | Result |

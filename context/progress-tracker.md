@@ -284,6 +284,30 @@ without mocks.
       `dograh-widget.js`. The marker appears only in the local Turbopack
       cache, which is never served.
   - The real call with the new variables is checked in DC-01 (I-02).
+- **C-22** ACC-01 access model and trial, server side (2026-11-13, batch 2):
+  - `lib/practice/access.ts`: `UserAccess` (ISO timestamps),
+    `parseUserAccess` (lenient, but a used trial stays used), `isAdmin`
+    (`ADMIN_UID`; unset or blank → nobody), `accessLevelOf`
+    (admin > approved > unused trial > blocked), `sessionKindFor`.
+  - `lib/practice/create-session.ts`: one transaction reads `users/{uid}` →
+    access level → 403 if blocked → validation with the kind → for a trial,
+    sets `access.trialUsed` → creates the v2 session with `kind` and
+    `userId`. Its adapter `createPracticeSession` is in `server.ts`
+    (`transaction.set` merge plus `transaction.create`).
+  - `session-setup.ts`: `validateSessionSetup` / `validatePracticeSetupRequest`
+    take `{kind}`. A trial ignores the body's duration and stores 1.
+  - `session.ts`: the DTO has `kind`. A v2 document without `kind` is full.
+    A trial must be 1 minute, and a full session cannot be.
+  - `POST /api/practice-setup` is now thin: 201 / 400 / 403
+    `access_required` + `accessStatus` / 500.
+  - The UI is unchanged until ACC-02. A trial account still sees the
+    duration pills, but its session is stored as 1 minute.
+  - Verify: `tests/access.test.mjs` (10 tests: parsing, admin, level matrix,
+    one trial then 403 with no write, 3 concurrent setups → 1 session,
+    invalid input keeps the trial, approved/admin full, pending/rejected
+    blocked, storage failure, strict trial/full parsing); route and creation
+    tests in `tests/api.test.mjs`; `npm test` 78/78; strip-types 5/5;
+    typegen + `tsc`; build; lint shows only the N-02c baseline.
 
 ## In Progress
 
@@ -345,7 +369,6 @@ Rules for every unit:
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **ACC-01** | Access model and trial, server side (`api-contracts.md` → Access and trial). The workflow-spec guidance for a 1-minute session is done earlier, with DC-01 in batch 1. Code: `lib/practice/access.ts` (pure rules, `isAdmin`), `access-server.ts`; `users/{uid}.access`; session `kind` and the 1-minute trial in the `practice-setup` transaction; 403 `access_required`; v2 parser reads `kind` (missing → `full`) and `durationMinutes: 1` only for trial; `ADMIN_UID` in `.env.example` and on Vercel | DC-01 | Tests: first setup → trial session, `trialUsed` set; second → 403 with no write; approved → full; admin → full; concurrent trial setups create one session; `kind` in the body ignored; old v2 sessions still parse |
 | **ACC-02** | Learner side: `POST /api/access-request`; access banner on `/` (trial available, trial used, pending, rejected, approved); trial form without the duration choice; 403 handling | ACC-01 | Route tests (401/400/409/200, `none`/`rejected` → `pending`); on the deployment, a new account sees the trial, makes a 1-minute call that gets reviewed, then sends a request |
 | **ACC-03** | Admin side: `/admin` page (pending and approved lists), `POST /api/admin/access/[uid]` (approve/reject/revoke), header link with the pending count, admin-only | ACC-02 | Tests: non-admin → 404 on the page and the route; each transition and invalid one (409); a decision about `ADMIN_UID` → 409. On the deployment: approve → the learner creates a full session; revoke → 403 again |
 | **LIM-01** | Daily call limit for approved learners (`api-contracts.md` → Daily call limit). Pure rules in `lib/practice/call-quota.ts`; `users/{uid}.callQuota` checked and incremented in the ACC-01 transaction; 429 `call_limit_reached`; calls left and reset time on `/`; admin exempt; `PRACTICE_DAILY_CALL_LIMIT` (default 5) in `.env.example` and on Vercel. Share the production URL with other people only after this unit | ACC-03 | Tests: under the limit → session created and `used` + 1; at the limit → 429 with no session and no write; a new day resets; concurrent requests never pass the limit; invalid env → default. On the deployment, the limit is reached and the form shows it |

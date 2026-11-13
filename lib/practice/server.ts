@@ -6,7 +6,35 @@ import { getCurrentUser } from "@/lib/actions/auth.action";
 import { readPracticeSession } from "./read-session";
 import { applyPracticeSessionCallEvent } from "./call-state";
 import { generatePracticeSessionReview } from "./review-state";
+import { createPracticeSessionForUser } from "./create-session";
 import { generateSessionReview } from "@/lib/ai/review";
+
+// POST /api/practice-setup. The users/{uid} read and both writes run in one transaction (ACC-01).
+export async function createPracticeSession(userId: string, body: unknown) {
+  return createPracticeSessionForUser(userId, body, {
+    adminUid: process.env.ADMIN_UID,
+    transaction: (apply) => adminDb.runTransaction(async (transaction) => {
+      const userReference = adminDb.collection("users").doc(userId);
+      return apply({
+        readUser: async () => {
+          const snapshot = await transaction.get(userReference);
+          return snapshot.exists ? snapshot.data() : undefined;
+        },
+        writeUser: (patch) => {
+          transaction.set(userReference, { ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        },
+        createSession: (document) => {
+          const reference = adminDb.collection("practiceSessions").doc();
+          transaction.create(reference, {
+            ...document, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+          });
+          return reference.id;
+        },
+      });
+    }),
+    onError: (error) => console.error("[practiceSetup.create]", { code: error instanceof Error ? error.name : "unknown" }),
+  });
+}
 // userId must come from authenticated server code, never from request JSON.
 export async function updatePracticeSessionCallState(sessionId: unknown, userId: string, update: unknown) {
   return applyPracticeSessionCallEvent(sessionId, userId, update, {

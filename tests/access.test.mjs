@@ -1,0 +1,154 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { loadTs } from "./helpers/load-ts.mjs";
+import { profileV2, setupV2, documentV2 } from "./helpers/fixtures.mjs";
+
+const access = loadTs("lib/practice/access.ts");
+const { createPracticeSessionForUser } = loadTs("lib/practice/create-session.ts");
+const domain = loadTs("lib/practice/session.ts");
+const { validatePracticeSetupRequest } = loadTs("lib/practice/session-setup.ts");
+
+const body = { profile: profileV2, setup: setupV2 };
+
+// In-memory Firestore: transactions run one at a time, like Firestore's serializable transactions.
+function memoryStore({ users = {}, adminUid } = {}) {
+  const state = { users: structuredClone(users), sessions: {}, nextId: 1, writes: 0 };
+  let queue = Promise.resolve();
+  const store = {
+    adminUid,
+    onError() {},
+    transaction: (apply) => {
+      const run = queue.then(() => apply({
+        readUser: async () => state.users[store.userId],
+        writeUser: (patch) => {
+          state.writes++;
+          state.users[store.userId] = { ...state.users[store.userId], ...structuredClone(patch) };
+        },
+        createSession: (document) => {
+          state.writes++;
+          const id = `session-${state.nextId++}`;
+          state.sessions[id] = structuredClone(document);
+          return id;
+        },
+      }));
+      queue = run.catch(() => undefined);
+      return run;
+    },
+  };
+  const create = (userId, requestBody = body) => {
+    store.userId = userId;
+    return createPracticeSessionForUser(userId, requestBody, store);
+  };
+  return { state, store, create };
+}
+
+test("access is parsed leniently; a missing field means an unused trial", () => {
+  assert.deepEqual(access.parseUserAccess(undefined), access.initialAccess);
+  assert.deepEqual(access.parseUserAccess({ status: "weird", trialUsed: "yes" }), access.initialAccess);
+  const parsed = access.parseUserAccess({ status: "pending", trialUsed: true, requestedAt: "2026-11-13T10:00:00.000Z",
+    requestMessage: "x".repeat(301), decidedAt: "not a date" });
+  assert.equal(parsed.status, "pending");
+  assert.equal(parsed.trialUsed, true);
+  assert.equal(parsed.requestedAt, "2026-11-13T10:00:00.000Z");
+  assert.equal(parsed.requestMessage, null);
+  assert.equal(parsed.decidedAt, null);
+});
+
+test("the admin comes only from ADMIN_UID; unset or blank means nobody is admin", () => {
+  assert.equal(access.isAdmin("uid-admin", "uid-admin"), true);
+  assert.equal(access.isAdmin("uid-admin", " uid-admin "), true);
+  for (const adminUid of [undefined, "", "   ", "someone-else"]) assert.equal(access.isAdmin("uid-admin", adminUid), false);
+});
+
+test("access level: admin > approved > unused trial > blocked", () => {
+  const level = (status, trialUsed, userId = "u") => access.accessLevelOf(userId, { ...access.initialAccess, status, trialUsed }, "admin");
+  assert.equal(level("none", true, "admin"), "admin");
+  assert.equal(level("approved", true), "full");
+  assert.equal(level("none", false), "trial");
+  assert.equal(level("pending", false), "trial");
+  for (const status of ["none", "pending", "rejected"]) assert.equal(level(status, true), "blocked");
+  assert.equal(access.sessionKindFor("blocked"), null);
+  assert.equal(access.sessionKindFor("trial"), "trial");
+  assert.equal(access.sessionKindFor("full"), "full");
+  assert.equal(access.sessionKindFor("admin"), "full");
+});
+
+test("a new account gets one 1-minute trial session, then 403 with no write", async () => {
+  const { state, create } = memoryStore();
+  const first = await create("user-a", { ...body, setup: { ...setupV2, durationMinutes: 20 }, kind: "full", userId: "user-b" });
+  assert.deepEqual(first, { status: "ok", sessionId: "session-1", kind: "trial" });
+  const session = state.sessions["session-1"];
+  assert.equal(session.kind, "trial");
+  assert.equal(session.durationMinutes, 1);
+  assert.equal(session.userId, "user-a");
+  assert.equal(state.users["user-a"].access.trialUsed, true);
+  assert.equal(domain.parsePracticeSession("session-1", session).kind, "trial");
+
+  const writes = state.writes;
+  assert.deepEqual(await create("user-a"), { status: "access_required", accessStatus: "none" });
+  assert.equal(state.writes, writes);
+  assert.equal(Object.keys(state.sessions).length, 1);
+});
+
+test("concurrent trial setups create exactly one session", async () => {
+  const { state, create } = memoryStore();
+  const results = await Promise.all([create("user-a"), create("user-a"), create("user-a")]);
+  assert.equal(results.filter((result) => result.status === "ok").length, 1);
+  assert.equal(results.filter((result) => result.status === "access_required").length, 2);
+  assert.equal(Object.keys(state.sessions).length, 1);
+});
+
+test("invalid input never uses the trial", async () => {
+  const { state, create } = memoryStore();
+  const invalid = await create("user-a", { profile: profileV2, setup: { ...setupV2, targetVocabulary: [] } });
+  assert.equal(invalid.status, "invalid");
+  assert.ok(invalid.fieldErrors["setup.targetVocabulary"]);
+  assert.equal(state.writes, 0);
+  assert.equal((await create("user-a")).kind, "trial");
+});
+
+test("approved accounts and the admin create full sessions with the chosen duration", async () => {
+  const { state, create } = memoryStore({
+    adminUid: "admin",
+    users: { "user-a": { access: { status: "approved", trialUsed: true } }, admin: {} },
+  });
+  for (const userId of ["user-a", "admin", "admin"]) {
+    const result = await create(userId);
+    assert.equal(result.status, "ok");
+    assert.equal(result.kind, "full");
+    assert.equal(state.sessions[result.sessionId].durationMinutes, 15);
+  }
+  assert.equal(state.users.admin.access, undefined, "the admin's trial is never touched");
+  const invalid = await create("user-a", { ...body, setup: { ...setupV2, durationMinutes: 1 } });
+  assert.ok(invalid.fieldErrors["setup.durationMinutes"]);
+});
+
+test("pending or rejected accounts with a used trial need approval", async () => {
+  for (const status of ["pending", "rejected"]) {
+    const { create } = memoryStore({ users: { "user-a": { access: { status, trialUsed: true } } } });
+    assert.deepEqual(await create("user-a"), { status: "access_required", accessStatus: status });
+  }
+});
+
+test("a storage failure returns unavailable", async () => {
+  const result = await createPracticeSessionForUser("user-a", body, {
+    adminUid: undefined, onError() {}, transaction: async () => { throw new Error("offline"); },
+  });
+  assert.deepEqual(result, { status: "unavailable" });
+});
+
+test("trial and full sessions parse strictly; sessions without kind stay full", () => {
+  assert.ok(validatePracticeSetupRequest({ profile: profileV2, setup: { ...setupV2, durationMinutes: undefined } }, { kind: "trial" }).ok);
+  assert.equal(validatePracticeSetupRequest({ profile: profileV2, setup: { ...setupV2, durationMinutes: 1 } }).ok, false);
+
+  const trial = { ...domain.createPracticeSessionDocumentV2(profileV2, setupV2, "trial"), userId: "user-a" };
+  assert.equal(trial.durationMinutes, 1);
+  assert.equal(domain.parsePracticeSession("s", trial).durationMinutes, 1);
+  assert.equal(domain.parsePracticeSession("s", { ...trial, durationMinutes: 10 }), null);
+  assert.equal(domain.parsePracticeSession("s", documentV2({ durationMinutes: 1 })), null);
+  assert.equal(domain.parsePracticeSession("s", documentV2({ kind: "vip" })), null);
+  const legacy = documentV2();
+  delete legacy.kind;
+  assert.equal(domain.parsePracticeSession("s", legacy).kind, "full");
+  assert.equal(domain.parsePracticeSession("s", documentV2()).kind, "full");
+});

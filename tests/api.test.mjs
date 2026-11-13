@@ -5,32 +5,53 @@ import { setup, review, profileV2, setupV2 } from "./helpers/fixtures.mjs";
 const context = { params: Promise.resolve({ sessionId: "session-a" }) };
 const request = (body = {}) => new Request("https://app.example.test/api", { method: "POST", body: JSON.stringify(body) });
 
-test("setup API authenticates, validates JSON and derives ownership from auth", async () => {
-  let user = null, saved;
+test("setup API authenticates, validates JSON and maps creation outcomes", async () => {
+  let user = null, calls = [], result = { status: "ok", sessionId: "session-a", kind: "trial" };
   const { POST } = loadTs("app/api/practice-setup/route.ts", {
     "@/lib/actions/auth.action": { getCurrentUser: async () => user },
-    "@/firebase/admin": { adminDb: { collection: () => ({ doc: () => ({ id: "session-a", set: async (doc) => { saved = doc; } }) }) } },
+    "@/lib/practice/server": { createPracticeSession: async (uid, body) => { calls.push([uid, body]); return result; } },
   });
   assert.equal((await POST(request(setup))).status, 401);
-  assert.equal(saved, undefined);
   user = { id: "user-a" };
   assert.equal((await POST(new Request("https://app.example.test", { method: "POST", body: "{" }))).status, 400);
-  assert.equal((await POST(request({}))).status, 400);
-  // The v1 catalog body is no longer accepted (SET-04).
-  assert.equal((await POST(request(setup))).status, 400);
-  assert.equal(saved, undefined);
-  const invalid = await POST(request({ profile: { ...profileV2, level: "Beginner" }, setup: setupV2 }));
+  assert.equal(calls.length, 0);
+  const created = await POST(request({ profile: profileV2, setup: setupV2, userId: "user-b" }));
+  assert.equal(created.status, 201);
+  assert.equal((await created.json()).sessionId, "session-a");
+  assert.equal(calls[0][0], "user-a", "ownership comes from the session cookie");
+  result = { status: "invalid", fieldErrors: { "profile.level": "Choose" } };
+  const invalid = await POST(request({}));
   assert.equal(invalid.status, 400);
-  assert.ok((await invalid.json()).fieldErrors["profile.level"]);
-  assert.equal(saved, undefined);
-  assert.equal((await POST(request({ profile: profileV2, setup: { ...setupV2, languageId: "japanese" },
-    userId: "user-b", status: "completed" }))).status, 201);
+  assert.deepEqual((await invalid.json()).fieldErrors, { "profile.level": "Choose" });
+  result = { status: "access_required", accessStatus: "pending" };
+  const blocked = await POST(request({}));
+  assert.equal(blocked.status, 403);
+  const blockedBody = await blocked.json();
+  assert.equal(blockedBody.reason, "access_required");
+  assert.equal(blockedBody.accessStatus, "pending");
+  result = { status: "unavailable" };
+  assert.equal((await POST(request({}))).status, 500);
+});
+
+test("setup creation stores an English v2 document owned by the cookie user", async () => {
+  const { createPracticeSessionForUser } = loadTs("lib/practice/create-session.ts");
+  let saved;
+  const store = { adminUid: undefined, onError() {}, transaction: (apply) => apply({
+    readUser: async () => ({ access: { status: "approved", trialUsed: true } }),
+    writeUser() {}, createSession: (document) => { saved = document; return "session-a"; },
+  }) };
+  const result = await createPracticeSessionForUser("user-a",
+    { profile: profileV2, setup: { ...setupV2, languageId: "japanese" }, userId: "user-b", status: "completed" }, store);
+  assert.equal(result.status, "ok");
   assert.equal(saved.schemaVersion, 2);
+  assert.equal(saved.kind, "full");
   assert.equal(saved.userId, "user-a");
   assert.equal(saved.status, "ready");
   assert.equal(saved.language.id, "english");
   assert.equal(saved.level, "B1");
   assert.equal(saved.setup.grammarFocus, null);
+  // The v1 catalog body is no longer accepted (SET-04).
+  assert.equal((await createPracticeSessionForUser("user-a", setup, store)).status, "invalid");
 });
 
 test("learner profile API authenticates, validates JSON and maps save outcomes", async () => {
