@@ -255,11 +255,16 @@ without mocks.
       24.x, `npm ci`, Production Branch, protection, variables, Firebase
       authorized domain, verification)
     - `.env.example` transcript comments updated for Vercel
-  - **Blocker:** none of the v2 work (EN-01, SET-01…05, DG-01…04, `context/`,
-    `dograh/`) is committed. `origin/main` is still `1102a28` (v1), so Vercel
-    would deploy v1 until the work is committed and pushed to `main`.
+  - The v2 work (EN-01, SET-01…05, DG-01…04, `context/`, `CLAUDE.md`) and
+    the README were uncommitted, with `origin/main` still at `1102a28` (v1).
+    By the user's choice, they are now committed on branch
+    `feat/v2-setup-vercel-deploy` and pushed. `docs/CHUONG_3.md` stays
+    uncommitted.
+  - GitHub renamed the repository to
+    `Quynhdang003/real-time-voice-agent-language-practice`. The old URL still
+    redirects.
   - Remaining:
-    - commit and push (waiting for the user's choice)
+    - the user opens the PR and merges it into `main`
     - the user creates the Vercel project, sets the variables and adds the
       Firebase authorized domain (README "Deploy on Vercel")
     - smoke test and log check on the deployment; record the domain here
