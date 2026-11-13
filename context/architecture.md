@@ -38,7 +38,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - `review-state.ts`: review claim and generation
   - `server.ts`: Firestore adapters
   - `dograh-context.ts`: widget context builder (SET-05)
-  - **[planned LIM-01]** `call-quota.ts`: pure daily-limit rules (day key in
+  - **[done LIM-01]** `call-quota.ts`: pure daily-limit rules (day key in
     `Asia/Ho_Chi_Minh`, calls left, reset time, allow/deny)
   - **[done ACC-01]** `access.ts`: pure access rules (`parseUserAccess`,
     `isAdmin`, `accessLevelOf`, `sessionKindFor`). **[done ACC-02]** It also
@@ -175,7 +175,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     "gentle_recast"|"immediate"|"end_of_session", vietnameseAllowed:
     "never"|"only_when_stuck", updatedAt}`. Written only by **Save as
     default**.
-  - **[planned LIM-01]** `callQuota`: `{day: "YYYY-MM-DD", used: int ≥ 0}`.
+  - **[done LIM-01]** `callQuota`: `{day: "YYYY-MM-DD", used: int ≥ 0}`.
     `day` is the calendar day in `Asia/Ho_Chi_Minh`. Written only by the
     transaction that creates a practice session. A missing field, or a `day`
     other than today, means 0 calls used.
@@ -284,7 +284,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - A learner in a call can still read the token. Allowed domains stop
     browsers on other origins, but not scripted requests. This residual risk
     is accepted for the thesis.
-  - **[planned LIM-01, ACC-01]** The trial rule and the daily call limit
+  - **[done LIM-01, ACC-01]** The trial rule and the daily call limit
     bound the calls started through FluentAI.
   - The 1-minute trial ends through the browser countdown, which a user can
     bypass. Calls made with the token outside FluentAI are not counted. DC-01
@@ -388,7 +388,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     configuration value that reaches the browser is the widget script URL for
     one callable session, passed as a prop by `/voice-call`. The Dograh API
     key is never set on Vercel.
-15. **[planned LIM-01]** The daily call limit is checked and incremented in
+15. **[done LIM-01]** The daily call limit is checked and incremented in
     the same Firestore transaction that creates the session. A session is
     never created over the limit, and used calls are never given back. The
     count shown on the page is only advisory.
@@ -418,7 +418,7 @@ variable there.
 | `GOOGLE_GENERATIVE_AI_API_KEY` | `lib/ai/gemini.ts` | V, L | Required for reviews |
 | `NEXT_PUBLIC_DOGRAH_WIDGET_SRC`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH` | nothing | Neither | No longer read since DG-05 (they put the token into the public bundle). Delete them from `.env.local` |
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | `/voice-call` page (server, `selectWidgetSource`) → `use-dograh-widget.ts` prop | V, L | **[done DG-05]** Required per accent. Server-only. **[planned DC-01]** Dograh Cloud script URLs, copied from the Cloud embed dialog (e.g. `https://app.dograh.com/embed/dograh-widget.js?token=…`; whether `apiEndpoint` is needed locally is checked in DC-01) |
-| `PRACTICE_DAILY_CALL_LIMIT` | `POST /api/practice-setup`, the home page | V, L | **[planned LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
+| `PRACTICE_DAILY_CALL_LIMIT` | `createPracticeSession` (`server.ts`) and `getAccessView` (`access-server.ts`) via `dailyCallLimit` | V, L | **[done LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
 | `ADMIN_UID` | `createPracticeSession` (`lib/practice/server.ts` → `isAdmin`); `/admin` and the admin routes from ACC-03 | V, L | **[done ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
 | `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[planned TR-01]** Used as the Bearer token; the same value goes into the Dograh Cloud `bearer_token` credential |
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` | V | Public mode. The code defaults to `app.dograh.com`. **[planned DC-01]** Set to `app.dograh.com` plus the storage host found in DC-01 |

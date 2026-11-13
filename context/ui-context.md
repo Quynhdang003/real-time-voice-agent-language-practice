@@ -130,6 +130,13 @@ instead of hex values.
     1-minute trial".
   - A blocked account sees a disabled **Full access needed** button with a
     `Lock` icon.
+- Daily limit (LIM-01), approved learners only:
+  - The summary card adds a "Calls left today: N of M" row.
+  - At 0, the button becomes a disabled **Daily limit reached** with a
+    `Lock` icon. A muted `role="status"` line gives the reopening date at
+    00:00 Vietnam time.
+  - A 429 response sets the count to 0 and shows the server message as the
+    form error.
 - Admin (ACC-03):
   - Header: for the `ADMIN_UID` account only, an **Access requests** link
     (`ShieldCheck`, outlined `rounded-xl`) sits left of the avatar menu. It

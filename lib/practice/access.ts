@@ -2,6 +2,7 @@
 // admin's approval. Pure module shared by the browser and the server; keep React and Firebase SDKs out.
 import { isOneOf, isRecord, normalizeText } from "./guards.ts";
 import type { FieldErrors } from "./guards.ts";
+import type { CallQuotaView } from "./call-quota.ts";
 
 export const accessStatuses = ["none", "pending", "approved", "rejected"] as const;
 export const sessionKinds = ["trial", "full"] as const;
@@ -78,15 +79,21 @@ export type AccessView = {
   trialUsed: boolean;
   requestedAt: string | null;
   decidedAt: string | null;
+  // LIM-01: only full (approved) accounts have a daily limit; the admin and trial accounts get null.
+  quota: CallQuotaView | null;
 };
 
-export function accessViewOf(userId: string, access: UserAccess, adminUid: string | undefined): AccessView {
+export function accessViewOf(
+  userId: string, access: UserAccess, adminUid: string | undefined, quota: CallQuotaView | null = null,
+): AccessView {
+  const level = accessLevelOf(userId, access, adminUid);
   return {
-    level: accessLevelOf(userId, access, adminUid),
+    level,
     status: access.status,
     trialUsed: access.trialUsed,
     requestedAt: access.requestedAt,
     decidedAt: access.decidedAt,
+    quota: level === "full" ? quota : null,
   };
 }
 

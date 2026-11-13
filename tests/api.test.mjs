@@ -36,7 +36,7 @@ test("setup API authenticates, validates JSON and maps creation outcomes", async
 test("setup creation stores an English v2 document owned by the cookie user", async () => {
   const { createPracticeSessionForUser } = loadTs("lib/practice/create-session.ts");
   let saved;
-  const store = { adminUid: undefined, onError() {}, transaction: (apply) => apply({
+  const store = { adminUid: undefined, dailyCallLimit: 5, now: () => new Date("2026-11-13T05:00:00.000Z"), onError() {}, transaction: (apply) => apply({
     readUser: async () => ({ access: { status: "approved", trialUsed: true } }),
     writeUser() {}, createSession: (document) => { saved = document; return "session-a"; },
   }) };
@@ -181,4 +181,17 @@ test("admin access API hides itself from non-admins and maps decisions", async (
     result = { status };
     assert.equal((await POST(request({ decision: "approve" }), uidContext)).status, code, status);
   }
+});
+
+test("setup API answers 429 with the limit and reset time", async () => {
+  const { POST } = loadTs("app/api/practice-setup/route.ts", {
+    "@/lib/actions/auth.action": { getCurrentUser: async () => ({ id: "user-a" }) },
+    "@/lib/practice/server": { createPracticeSession: async () => ({ status: "call_limit_reached", limit: 5, resetsAt: "2026-11-13T17:00:00.000Z" }) },
+  });
+  const response = await POST(request({}));
+  assert.equal(response.status, 429);
+  const body = await response.json();
+  assert.equal(body.reason, "call_limit_reached");
+  assert.equal(body.limit, 5);
+  assert.equal(body.resetsAt, "2026-11-13T17:00:00.000Z");
 });

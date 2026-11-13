@@ -10,7 +10,9 @@ import { SessionCard } from "@/components/fluent/session-card";
 import { TutorCard } from "@/components/fluent/tutor-card";
 import type { PracticeSessionSummary, Tutor } from "@/components/fluent/types";
 import { Input } from "@/components/ui/input";
-import { TRIAL_DURATION_MINUTES, accessStatuses, type AccessStatus, type AccessView } from "@/lib/practice/access";
+import {
+  TRIAL_DURATION_MINUTES, accessStatuses, formatAccessDate, type AccessStatus, type AccessView,
+} from "@/lib/practice/access";
 import { isOneOf, isRecord, type FieldErrors } from "@/lib/practice/guards";
 import {
   LEARNER_NAME_MAX_LENGTH, accents, cefrLevels, correctionStyles, speechPaces, validateLearnerProfile,
@@ -64,6 +66,10 @@ export function HomePracticeSetup({ userName, initialProfile, initialAccess, ini
   const [access, setAccess] = useState<AccessView>(initialAccess);
   const kind = access.level === "trial" ? "trial" : "full";
   const blocked = access.level === "blocked";
+  // LIM-01: approved learners have a daily call limit; the admin and trial accounts have no quota.
+  const quota = access.quota;
+  const limitReached = quota !== null && quota.remaining === 0;
+  const cannotStart = blocked || limitReached;
   const [profile, setProfile] = useState<LearnerProfileDraft>(initialProfile);
   const [topic, setTopic] = useState("");
   const [scenario, setScenario] = useState("");
@@ -127,7 +133,7 @@ export function HomePracticeSetup({ userName, initialProfile, initialAccess, ini
   }
 
   async function startVoicePractice() {
-    if (isStarting || blocked) return;
+    if (isStarting || cannotStart) return;
     const request = validatePracticeSetupRequest({
       profile,
       setup: { topic, scenario, sessionMode, targetVocabulary, reviewVocabulary, grammarFocus, weakPoints, durationMinutes, tutorId },
@@ -151,6 +157,14 @@ export function HomePracticeSetup({ userName, initialProfile, initialAccess, ini
         const status = accessStatusOf(body);
         setAccess((current) => ({ ...current, level: "blocked", trialUsed: true, status: status ?? current.status }));
         setFormError(messageOf(body, "Your free trial call has been used. Full access needs the admin's approval."));
+        setIsStarting(false);
+        return;
+      }
+      // The daily limit was reached meanwhile (e.g. in another tab).
+      if (response.status === 429) {
+        const reached = limitOf(body);
+        if (reached) setAccess((current) => ({ ...current, quota: { ...reached, used: reached.limit, remaining: 0 } }));
+        setFormError(messageOf(body, "You have used today's calls. The limit resets at midnight (Vietnam time)."));
         setIsStarting(false);
         return;
       }
@@ -305,11 +319,18 @@ export function HomePracticeSetup({ userName, initialProfile, initialAccess, ini
                 <SummaryRow label="Language" value={practiceLanguage.name} />
                 <SummaryRow label="Level" value={profile.level ?? "Not selected"} />
                 <SummaryRow label="Duration" value={kind === "trial" ? `${TRIAL_DURATION_MINUTES} min (trial)` : `${durationMinutes} min`} />
+                {quota ? <SummaryRow label="Calls left today" value={`${quota.remaining} of ${quota.limit}`} /> : null}
               </div>
               {formError ? <p className="mt-4 text-sm font-medium leading-5 text-app-error" role="alert">{formError}</p> : null}
-              <button type="button" onClick={startVoicePractice} disabled={isStarting || blocked} aria-busy={isStarting}
+              {limitReached && !formError ? (
+                <p className="mt-4 text-sm leading-5 text-app-muted" role="status">
+                  You have used today&apos;s {quota.limit} calls. New calls open on {formatAccessDate(quota.resetsAt)} at 00:00 (Vietnam time).
+                </p>
+              ) : null}
+              <button type="button" onClick={startVoicePractice} disabled={isStarting || cannotStart} aria-busy={isStarting}
                 className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-app-primary px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70">
                 {blocked ? <><Lock className="h-5 w-5" /> Full access needed</>
+                  : limitReached ? <><Lock className="h-5 w-5" /> Daily limit reached</>
                   : <><Mic className="h-5 w-5" /> {isStarting ? "Preparing practice..." : kind === "trial" ? "Start 1-minute trial" : "Start Voice Practice"}</>}
               </button>
             </section>
@@ -363,6 +384,12 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 
 function isSuccessfulPracticeSetup(value: unknown): value is { success: true; sessionId: string } {
   return isRecord(value) && value.success === true && typeof value.sessionId === "string" && value.sessionId.length > 0;
+}
+
+function limitOf(value: unknown): { limit: number; resetsAt: string } | undefined {
+  if (!isRecord(value) || typeof value.limit !== "number" || !Number.isSafeInteger(value.limit) || value.limit < 1) return undefined;
+  return typeof value.resetsAt === "string" && Number.isFinite(Date.parse(value.resetsAt))
+    ? { limit: value.limit, resetsAt: value.resetsAt } : undefined;
 }
 
 function accessStatusOf(value: unknown): AccessStatus | undefined {

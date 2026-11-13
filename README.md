@@ -135,6 +135,7 @@ A change applies only to new deployments: redeploy after editing.
 | `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | Same as `.env.local`. The private key may keep its `\n` escapes; `firebase/admin.ts` turns them into newlines |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Same as `.env.local` |
 | `ADMIN_UID` | The Firebase Auth UID of the single admin account (Firebase console → Authentication → Users). The admin has full access and approves access requests. Without it, nobody can be approved |
+| `PRACTICE_DAILY_CALL_LIMIT` | Full calls per approved learner per day, Vietnam time. Optional; `5` when unset or invalid. The admin is exempt |
 | `DOGRAH_WEBHOOK_SECRET` | A new random value (e.g. 32 random bytes as hex). DC-01 puts the same value in the Dograh Cloud `bearer_token` credential |
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com` (DC-01 adds the storage host) |
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | The Dograh Cloud embed script URL of each workflow ([`dograh/README.md`](dograh/README.md)). Server-only; never `NEXT_PUBLIC_` |

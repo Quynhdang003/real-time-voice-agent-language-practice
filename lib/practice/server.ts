@@ -7,12 +7,15 @@ import { readPracticeSession } from "./read-session";
 import { applyPracticeSessionCallEvent } from "./call-state";
 import { generatePracticeSessionReview } from "./review-state";
 import { createPracticeSessionForUser } from "./create-session";
+import { dailyCallLimit } from "./call-quota";
 import { generateSessionReview } from "@/lib/ai/review";
 
-// POST /api/practice-setup. The users/{uid} read and both writes run in one transaction (ACC-01).
+// POST /api/practice-setup. The users/{uid} read and all writes run in one transaction (ACC-01, LIM-01).
 export async function createPracticeSession(userId: string, body: unknown) {
   return createPracticeSessionForUser(userId, body, {
     adminUid: process.env.ADMIN_UID,
+    dailyCallLimit: dailyCallLimit(process.env.PRACTICE_DAILY_CALL_LIMIT),
+    now: () => new Date(),
     transaction: (apply) => adminDb.runTransaction(async (transaction) => {
       const userReference = adminDb.collection("users").doc(userId);
       return apply({

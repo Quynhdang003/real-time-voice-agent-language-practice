@@ -11,11 +11,13 @@ const { validatePracticeSetupRequest } = loadTs("lib/practice/session-setup.ts")
 const body = { profile: profileV2, setup: setupV2 };
 
 // In-memory Firestore: transactions run one at a time, like Firestore's serializable transactions.
-function memoryStore({ users = {}, adminUid } = {}) {
+function memoryStore({ users = {}, adminUid, dailyCallLimit = 5, now = () => new Date("2026-11-13T05:00:00.000Z") } = {}) {
   const state = { users: structuredClone(users), sessions: {}, nextId: 1, writes: 0 };
   let queue = Promise.resolve();
   const store = {
     adminUid,
+    dailyCallLimit,
+    now: () => now(),
     onError() {},
     transaction: (apply) => {
       const run = queue.then(() => apply({
@@ -289,4 +291,55 @@ test("admin lists: pending oldest first, approved newest first, admin and bad ro
   assert.deepEqual(lists.approved.map((row) => row.uid), ["a2", "a1"]);
   assert.deepEqual(Object.keys(lists.pending[0]).sort(),
     ["decidedAt", "email", "name", "requestMessage", "requestedAt", "status", "trialUsed", "uid"]);
+});
+
+// LIM-01: daily call limit inside the session-creation transaction.
+test("approved learners get the daily limit; the 6th call is refused with no write", async () => {
+  const { state, create } = memoryStore({ users: { "user-a": { access: { status: "approved", trialUsed: true } } } });
+  for (let call = 1; call <= 5; call++) assert.equal((await create("user-a")).status, "ok", `call ${call}`);
+  assert.deepEqual(state.users["user-a"].callQuota, { day: "2026-11-13", used: 5 });
+  const writes = state.writes;
+  assert.deepEqual(await create("user-a"), { status: "call_limit_reached", limit: 5, resetsAt: "2026-11-13T17:00:00.000Z" });
+  assert.equal(state.writes, writes);
+  assert.equal(Object.keys(state.sessions).length, 5);
+});
+
+test("the limit resets at Vietnam midnight", async () => {
+  let now = new Date("2026-11-13T16:59:00.000Z");
+  const { state, create } = memoryStore({ dailyCallLimit: 1, now: () => now,
+    users: { "user-a": { access: { status: "approved", trialUsed: true } } } });
+  assert.equal((await create("user-a")).status, "ok");
+  assert.equal((await create("user-a")).status, "call_limit_reached");
+  now = new Date("2026-11-13T17:00:00.000Z");
+  assert.equal((await create("user-a")).status, "ok");
+  assert.deepEqual(state.users["user-a"].callQuota, { day: "2026-11-14", used: 1 });
+});
+
+test("concurrent requests never pass the limit", async () => {
+  const { state, create } = memoryStore({ users: { "user-a": { access: { status: "approved", trialUsed: true } } } });
+  const results = await Promise.all(Array.from({ length: 8 }, () => create("user-a")));
+  assert.equal(results.filter((result) => result.status === "ok").length, 5);
+  assert.equal(results.filter((result) => result.status === "call_limit_reached").length, 3);
+  assert.equal(Object.keys(state.sessions).length, 5);
+});
+
+test("invalid input uses no call; trial accounts and the admin have no daily quota", async () => {
+  const { state, create } = memoryStore({ adminUid: "admin", dailyCallLimit: 1,
+    users: { "user-a": { access: { status: "approved", trialUsed: true } }, admin: {} } });
+  assert.equal((await create("user-a", { profile: profileV2, setup: { ...setupV2, topic: "" } })).status, "invalid");
+  assert.equal(state.users["user-a"].callQuota, undefined);
+  assert.equal((await create("user-a")).status, "ok");
+  for (let call = 0; call < 3; call++) assert.equal((await create("admin")).status, "ok", "the admin is exempt");
+  assert.equal(state.users.admin.callQuota, undefined);
+  assert.equal((await create("trial-user")).kind, "trial");
+  assert.equal(state.users["trial-user"].callQuota, undefined);
+});
+
+test("only full accounts see a quota in their view", () => {
+  const view = { limit: 5, used: 2, remaining: 3, resetsAt: "2026-11-13T17:00:00.000Z" };
+  const of = (status, trialUsed, userId = "u") => access.accessViewOf(userId, { ...access.initialAccess, status, trialUsed }, "admin", view);
+  assert.deepEqual(of("approved", true).quota, view);
+  assert.equal(of("none", false).quota, null);
+  assert.equal(of("pending", true).quota, null);
+  assert.equal(of("approved", true, "admin").quota, null);
 });

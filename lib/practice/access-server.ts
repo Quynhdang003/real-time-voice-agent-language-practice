@@ -6,6 +6,7 @@ import {
   accessAccountLists, accessViewOf, decideAccess, initialAccess, isAdmin, parseUserAccess, requestAccess,
 } from "./access";
 import type { AccessAccountRow, AccessUserTransaction, AccessView } from "./access";
+import { callQuotaView, dailyCallLimit } from "./call-quota";
 import { isRecord } from "./guards";
 
 const ACCOUNT_LIST_LIMIT = 200;
@@ -35,12 +36,14 @@ function userTransaction(userId: string) {
   });
 }
 
-// Home page banner (ACC-02). A read failure shows the default view; the server decides again on submit.
+// Home page banner and calls left today (ACC-02, LIM-01). A read failure shows the default view; the server
+// decides again on submit.
 export async function getAccessView(user: { id: string }): Promise<AccessView> {
   try {
     const snapshot = await adminDb.collection("users").doc(user.id).get();
-    const data = snapshot.data();
-    return accessViewOf(user.id, parseUserAccess(isRecord(data) ? data.access : undefined), process.env.ADMIN_UID);
+    const data = isRecord(snapshot.data()) ? snapshot.data() : undefined;
+    const quota = callQuotaView(data?.callQuota, new Date(), dailyCallLimit(process.env.PRACTICE_DAILY_CALL_LIMIT));
+    return accessViewOf(user.id, parseUserAccess(data?.access), process.env.ADMIN_UID, quota);
   } catch (error) {
     logError("read")(error);
     return accessViewOf(user.id, initialAccess, process.env.ADMIN_UID);

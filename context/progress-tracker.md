@@ -32,12 +32,13 @@ change.
 - Batches (decided 2026-11-13, at most 4 units each):
   1. DG-05, the repo part of DC-01, and the 1-minute trial guidance in the
      workflow spec (moved from ACC-01, so the user imports the workflows
-     once). **Code done 2026-11-13** on branch
-     `feat/dg-05-server-widget-url` (DG-05 = C-21; DC-01 repo part = I-02).
-     After the user merges it, DC-01 continues with the user's Dograh Cloud
-     setup and real calls.
-  2. ACC-01, ACC-02, ACC-03, LIM-01. This is code only, so it can run while
-     the user sets up Dograh Cloud (I-02).
+     once). **Merged (PR #2)**, so production has it (smoke 10/10). DG-05 =
+     C-21; the DC-01 repo part = I-02. DC-01 continues with the user's
+     Dograh Cloud setup and real calls.
+  2. ACC-01, ACC-02, ACC-03, LIM-01. **Code done 2026-11-13** on branch
+     `feat/acc-access-and-call-limit` (C-22…C-25). After the merge, the user
+     sets `ADMIN_UID` (and optionally `PRACTICE_DAILY_CALL_LIMIT`) on Vercel
+     and does the manual checks listed under C-23…C-25.
   3. DC-02, TR-01, TR-02, TR-03. They need the Dograh Cloud workflows running.
   4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
 - Working today with real services: sign-in → practice setup (v1) → real
@@ -362,6 +363,33 @@ without mocks.
     Vercel, sign in as the admin → the header link appears → approve a
     request → that learner can choose 10/15/20 minutes; revoke → 403 again;
     another account gets 404 on `/admin`.
+- **C-25** LIM-01 daily call limit (2026-11-13, batch 2):
+  - `lib/practice/call-quota.ts` (pure):
+    - `dailyCallLimit` (positive integer, else 5);
+    - `quotaDay` / `quotaResetsAt` (Vietnam = UTC+7 with no DST, so a
+      fixed offset);
+    - `parseCallQuota`, `callsUsedToday`, `callQuotaView`, `consumeCall`.
+  - `createPracticeSessionForUser`: for approved, non-admin accounts,
+    `consumeCall` runs after validation, in the same transaction. Over the
+    limit → `call_limit_reached` with no write. The store gets
+    `dailyCallLimit` and `now`.
+  - The route answers 429 `{reason, limit, resetsAt}`.
+  - `AccessView.quota` (full accounts only) comes from `getAccessView`.
+  - Home: a "Calls left today" row; at 0, a disabled "Daily limit reached"
+    and the reopening date; a 429 sets the count to 0.
+  - `.env.example` and the README list `PRACTICE_DAILY_CALL_LIMIT`.
+  - Verify:
+    - `tests/call-quota.test.mjs` (4: env parsing, the Vietnam midnight
+      boundary and year rollover, stale or malformed quotas, consume);
+    - `tests/access.test.mjs` +5 (the 6th call → 429 with no write; reset at
+      17:00Z; 8 concurrent requests → exactly 5 sessions; invalid input
+      uses no call; trial and admin have no quota; view);
+    - `tests/api.test.mjs` +1 (429 body);
+    - `npm test` 97/97; strip-types 5/5; typegen + `tsc`; build; smoke
+      13/13 locally; lint shows only the N-02c baseline.
+  - **Manual check pending (user, after deploy):** with a temporary
+    `PRACTICE_DAILY_CALL_LIMIT=1` on Vercel, an approved learner creates
+    one session, then sees "Daily limit reached".
 
 ## In Progress
 
@@ -423,7 +451,6 @@ Rules for every unit:
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **LIM-01** | Daily call limit for approved learners (`api-contracts.md` → Daily call limit). Pure rules in `lib/practice/call-quota.ts`; `users/{uid}.callQuota` checked and incremented in the ACC-01 transaction; 429 `call_limit_reached`; calls left and reset time on `/`; admin exempt; `PRACTICE_DAILY_CALL_LIMIT` (default 5) in `.env.example` and on Vercel. Share the production URL with other people only after this unit | ACC-03 | Tests: under the limit → session created and `used` + 1; at the limit → 429 with no session and no write; a new day resets; concurrent requests never pass the limit; invalid env → default. On the deployment, the limit is reached and the form shows it |
 | **DC-02** | Delete the retired self-hosted stack (confirmed 2026-11-13): `dograh/docker-compose.yml`, `dograh/.env.example`, `backup.ps1` / `restore.ps1`, the `dograh:up|down|logs|backup` scripts, the `local` transcript mode and its variables; update README, tests and context | DC-01 | `npm test`, build and lint pass; no `localhost:8020`, `fluentai-dograh` or `DOGRAH_TRANSCRIPT_MODE` left in code or docs |
 | **TR-01** | Webhook v2: Bearer auth, flat payload, `""` means absent, lookup by `session_id`, run cross-check, idempotent transaction; remove `getDograhRun` / `DOGRAH_WORKFLOW_ID` (fixes N-01a,c,d,e). Then enable the Webhook node in both Cloud workflows | DC-01 | Wrong Bearer → 401; redelivery is a no-op; an old session with the same run ID is untouched; on the deployment, a real Cloud delivery is linked by `session_id` |
 | **TR-02** | Download reason codes (`transcriptError`); 503 for transient failures until the final attempt; public mode follows ≤ 3 redirects, each hop validated against the allowlist (fixes N-01b, N-01f) | TR-01 | Tests per reason code and per redirect case (allowed, off-list, too many hops); on the deployment, a real Cloud transcript reaches `ready` |

@@ -43,6 +43,14 @@ export async function POST(request: Request) {
           reason: "access_required",
           accessStatus: result.accessStatus,
         }, { status: 403 });
+      case "call_limit_reached":
+        return NextResponse.json({
+          success: false,
+          message: `You have used today's ${result.limit} calls. The limit resets at midnight (Vietnam time).`,
+          reason: "call_limit_reached",
+          limit: result.limit,
+          resetsAt: result.resetsAt,
+        }, { status: 429 });
       default:
         return NextResponse.json({ success: false, message: UNAVAILABLE }, { status: 500 });
     }

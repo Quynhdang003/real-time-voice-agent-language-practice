@@ -9,7 +9,7 @@ Since 2026-11-13 the routes are served by the Vercel deployment (`https://<produ
 ## Conventions
 
 - Every route is `POST` with `export const runtime = "nodejs"`. Responses are JSON: success `{success: true, …}`, error `{success: false, message}`. Messages are short, generic English for the user and never contain provider details.
-- Route handlers stay thin: auth → parse JSON (`try/catch` → 400) → call `lib/` → map its `{status}` result to HTTP through a `failures` table. Names in backticks below are those `status` values. Only `generate-review` returns them to the client, as `reason`. **[planned ACC-01…ACC-03, LIM-01]** `practice-setup` (`access_required`, `call_limit_reached`), `access-request` and the admin route will also return `reason`.
+- Route handlers stay thin: auth → parse JSON (`try/catch` → 400) → call `lib/` → map its `{status}` result to HTTP through a `failures` table. Names in backticks below are those `status` values. Only `generate-review` returns them to the client, as `reason`. Since ACC-01…ACC-03 and LIM-01, `practice-setup` (`access_required`, `call_limit_reached`), `access-request` (`already_pending`, `already_approved`) and the admin route (`not_found`, `invalid_transition`) also return `reason`.
 - Auth dependencies:
   - Session cookie (`getCurrentUser()` in `lib/actions/auth.action.ts`): httpOnly cookie `fluentai_session`, verified with revocation checking. Missing or invalid → 401. `userId` always comes from the cookie, never from the body.
   - Webhook secret (`app/api/dograh/transcript-webhook/route.ts`): header `x-dograh-webhook-secret`, compared timing-safe with `DOGRAH_WEBHOOK_SECRET`. Missing or wrong → 401.
@@ -27,7 +27,7 @@ S = session cookie required. All routes below are S.
 
 | Route | | Success | Errors |
 |---|---|---|---|
-| `POST /api/practice-setup` `{profile, setup}` (below) | S | 201 `{success: true, sessionId}`; a v2 document is created with `status: "ready"`, `kind` and `userId` from the cookie (ACC-01) | 401 (checked before the body is read), 400 invalid JSON, 400 `{success: false, message, fieldErrors}`, 403 `{success: false, message, reason: "access_required", accessStatus}` (trial used, not approved), 500 `unavailable` |
+| `POST /api/practice-setup` `{profile, setup}` (below) | S | 201 `{success: true, sessionId}`; a v2 document is created with `status: "ready"`, `kind` and `userId` from the cookie (ACC-01) | 401 (checked before the body is read), 400 invalid JSON, 400 `{success: false, message, fieldErrors}`, 403 `{success: false, message, reason: "access_required", accessStatus}` (trial used, not approved), 429 `{success: false, message, reason: "call_limit_reached", limit, resetsAt}` (LIM-01), 500 `unavailable` |
 | `PUT /api/learner-profile` (below) | S | 200 `{success: true, profile}` | 401, 400 invalid JSON, 400 `fieldErrors`, 500 |
 | `POST /api/practice-session/[sessionId]/call-event` (body below) | S | 200 `{success: true}`; also for a repeated identical event (no write) | 401, 400 invalid JSON, 400 `invalid_id`, 400 `invalid_update`, 404 `not_found`, 409 `conflict`, 500 `invalid_data` (stored document fails parsing), 500 `unavailable` |
 | `POST /api/practice-session/[sessionId]/generate-review` (no body) | S | 200 `{success: true, review}`; a newly generated review, or the saved one when `reviewStatus` is already `completed` | `{success: false, message, reason}`: 401 `unauthenticated`, 400 `invalid_id`, 404 `not_found`, 500 `invalid_data`, 409 `not_ready` (call not `completed`), 409 `transcript_pending`, 409 `transcript_empty`, 409 `transcript_error`, 409 `already_processing`, 503 `quota`, 500 `invalid_output`, 500 `unavailable` |
@@ -210,7 +210,9 @@ Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it
 - **`/admin` data** (server component, `access-server.ts`): pending users by `requestedAt` ascending, and approved users by `decidedAt` descending. Each row shows `{uid, name, email, requestedAt, requestMessage, trialUsed, decidedAt}`. Queries use the single field `access.status` (no composite index) and are sorted in memory, at most 200 rows each. The header link shows the pending count, for the admin only.
 - Logs never contain emails or request messages.
 
-### Daily call limit (LIM-01)
+### Daily call limit — implemented (LIM-01)
+
+Implemented in `lib/practice/call-quota.ts` (pure: `dailyCallLimit`, `quotaDay`, `quotaResetsAt`, `callQuotaView`, `consumeCall`; Vietnam is UTC+7 with no daylight saving time, so the day uses a fixed offset). Enforced in `createPracticeSessionForUser` and shown through `AccessView.quota`.
 
 Decided 2026-11-13: registration stays open, and the number of calls per learner is limited to control cost.
 
@@ -223,7 +225,7 @@ Decided 2026-11-13: registration stays open, and the number of calls per learner
   - Limit reached → **429** `{success: false, message, reason: "call_limit_reached", limit, resetsAt}`. `resetsAt` is the ISO time of the next local midnight. No session is created.
   - Validation errors (400) are returned before the limit is checked and use no call.
   - `practice-setup` returns `reason` (`access_required`, `call_limit_reached`) because the form branches on it.
-- **Home page:** for an approved account, `/` receives `{limit, used, resetsAt}` from the server, alongside the profile. It shows the calls left today. When none are left, **Start Voice Practice** is disabled and the reset time is shown. The 429 response shows the same message, for a limit reached in another tab.
+- **Home page:** for an approved account, `/` receives `AccessView.quota` `{limit, used, remaining, resetsAt}` from `getAccessView`, alongside the profile (null for the admin and trial accounts). It shows the calls left today. When none are left, **Start Voice Practice** is disabled and the reset time is shown. The 429 response shows the same message, for a limit reached in another tab.
 - Not counted: sessions created before LIM-01 is deployed, trial sessions, and calls made with the embed token outside FluentAI.
 
 ### Dograh context — implemented (SET-05, `lib/practice/dograh-context.ts`)
