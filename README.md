@@ -20,14 +20,19 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## Dograh (self-hosted voice tutor)
+## Dograh (voice tutor)
 
-FluentAI runs its own Dograh 1.50.0 stack from [`dograh/`](dograh/README.md):
-UI `http://localhost:3020`, API `http://localhost:8020`, MinIO `http://localhost:9020`.
-Start it with `npm run dograh:up`, build the two tutor workflows (American and British) from
-[`dograh/workflow-spec.md`](dograh/workflow-spec.md), and copy the variable names from
-[`.env.example`](.env.example) into `.env.local`. The details below describe the current transcript
-webhook; with the new stack the local origins are `http://localhost:8020,http://localhost:9020`.
+FluentAI uses **Dograh Cloud** (`https://app.dograh.com`) for the voice calls, in development and production.
+The two tutor workflows (American and British) are defined in
+[`dograh/workflow-spec.md`](dograh/workflow-spec.md). The setup steps, in Vietnamese, are in
+[`dograh/README.md`](dograh/README.md).
+
+The widget script URLs are the server-only variables `DOGRAH_WIDGET_SRC_AMERICAN` / `DOGRAH_WIDGET_SRC_BRITISH`.
+The `/voice-call` page passes the URL only to the owner of a session that can still start a call. Never use a
+`NEXT_PUBLIC_` name for them, because it would publish the embed token in the JS bundle.
+
+The Docker stack in `dograh/docker-compose.yml` (with its backup scripts) is retired and will be removed
+(DC-02). The section below describes the current transcript webhook, which TR-01 and TR-02 will change.
 
 ## Dograh transcript webhook
 
@@ -131,11 +136,12 @@ A change applies only to new deployments: redeploy after editing.
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Same as `.env.local` |
 | `DOGRAH_WEBHOOK_SECRET` | A new random value (e.g. 32 random bytes as hex). DC-01 puts the same value in the Dograh Cloud `bearer_token` credential |
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com` (DC-01 adds the storage host) |
+| `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | The Dograh Cloud embed script URL of each workflow ([`dograh/README.md`](dograh/README.md)). Server-only; never `NEXT_PUBLIC_` |
 
 Do **not** set `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS`,
-`DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL`, `DOGRAH_WORKFLOW_ID` or any `DOGRAH_*`
-variable of the retired Docker stack on Vercel. The Dograh widget URLs are added in
-DC-01; until then `/voice-call` reports that voice calling is not configured.
+`DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL`, `DOGRAH_WORKFLOW_ID`, any `NEXT_PUBLIC_DOGRAH_*`
+variable, or any `DOGRAH_*` variable of the retired Docker stack on Vercel. Until the
+widget URLs are set, `/voice-call` reports that voice calling is not configured.
 
 ### 3. Firebase
 
