@@ -13,10 +13,11 @@ for (const path of ["/", "/voice-call?sessionId=session-a", "/review?sessionId=s
   assert.equal(new URL(response.headers.get("location"), base).pathname, "/sign-in");
   console.log(`PASS ${path}: redirects to sign-in`);
 }
-for (const path of ["/api/practice-setup", "/api/practice-session/session-a/call-event",
-  "/api/practice-session/session-a/generate-review", "/api/dograh/transcript-webhook"]) {
-  const response = await fetch(new URL(path, base), { method: "POST", body: "{}", signal: AbortSignal.timeout(15_000) });
+for (const [method, path] of [["POST", "/api/practice-setup"], ["POST", "/api/practice-session/session-a/call-event"],
+  ["POST", "/api/practice-session/session-a/generate-review"], ["POST", "/api/dograh/transcript-webhook"],
+  ["PUT", "/api/learner-profile"]]) {
+  const response = await fetch(new URL(path, base), { method, body: "{}", signal: AbortSignal.timeout(15_000) });
   assert.equal(response.status, 401, path);
   assert.equal((await response.json()).success, false);
-  console.log(`PASS ${path}: unauthenticated request rejected`);
+  console.log(`PASS ${method} ${path}: unauthenticated request rejected`);
 }

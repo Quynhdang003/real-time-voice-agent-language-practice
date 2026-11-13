@@ -1,15 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import type { PracticeLanguage, PracticeTopic, PracticeTutor } from "@/lib/practice/session";
-
-export type Language = PracticeLanguage & {
-  flag: string;
-  level: string;
-  progress: number;
-};
-
-export type Topic = PracticeTopic & {
-  icon: LucideIcon;
-};
+import type { PracticeTutor } from "@/lib/practice/session";
 
 export type Tutor = PracticeTutor & {
   description: string;

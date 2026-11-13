@@ -13,6 +13,11 @@ test("setup supports every configured language/topic/level/duration", () => {
         for (const durationMinutes of domain.practiceDurations)
           assert.ok(domain.parsePracticeSetup({ ...setup, languageId, topicId, level, durationMinutes }));
 });
+test("legacy sessions in other languages stay readable", () => {
+  assert.deepEqual(domain.creatablePracticeLanguageIds, ["english"]);
+  const legacy = document({ language: { id: "japanese", name: "Japanese" } });
+  assert.equal(domain.parsePracticeSession("session-a", legacy).language.id, "japanese");
+});
 test("setup and session IDs reject invalid values", () => {
   for (const value of [null, {}, { ...setup, languageId: "unknown" }, { ...setup, durationMinutes: "5" }])
     assert.equal(domain.parsePracticeSetup(value), null);

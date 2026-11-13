@@ -1,0 +1,153 @@
+# FluentAI's own self-hosted Dograh stack (voice tutor platform).
+# Adapted from the upstream local stack (github.com/dograh-hq/dograh docker-compose.yaml, release 1.50.0).
+# Images are pinned by tag AND digest to the version verified in context/api-contracts.md.
+# Ports avoid the ai-companion stack (3010/8010/9000), so both can run side by side:
+#   UI http://localhost:3020   API http://localhost:8020   MinIO http://localhost:9020 (console 9021)
+# Usage (from the repo root): docker compose -f dograh/docker-compose.yml up -d
+# WARNING: `docker compose -f dograh/docker-compose.yml down -v` DELETES all workflows, runs and recordings.
+#          Run dograh/scripts/backup.ps1 first. Plain `down` (without -v) keeps the data.
+name: fluentai-dograh
+
+services:
+  dograh-postgres:
+    image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      # Baked into the volume on first init; changing it later needs ALTER USER.
+      POSTGRES_PASSWORD: ${DOGRAH_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - dograh
+
+  dograh-redis:
+    image: redis:7@sha256:71da9275c5f3fcb97d0fa0c8c5b36cc995327265420f17a04bfd544f458059f7
+    restart: unless-stopped
+    command: --requirepass ${DOGRAH_REDIS_PASSWORD:-redissecret}
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${DOGRAH_REDIS_PASSWORD:-redissecret}", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    networks:
+      - dograh
+
+  dograh-minio:
+    # Dograh's community MinIO build; upstream MinIO no longer publishes images.
+    image: dograhai/minio:2026.09.22@sha256:aa0a8b9f55b0ca5ec938eaced3849b52a18b96c36f26b0abf8fc6d3defad28db
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${DOGRAH_MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${DOGRAH_MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    ports:
+      # Transcript/recording links redirect here (MINIO_PUBLIC_ENDPOINT); FluentAI downloads from it.
+      - "127.0.0.1:${DOGRAH_MINIO_PORT:-9020}:9000"
+      - "127.0.0.1:${DOGRAH_MINIO_CONSOLE_PORT:-9021}:9001"
+    volumes:
+      - minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dograh
+
+  dograh-api:
+    # Also runs the workers that deliver the end-of-call Webhook node to FluentAI.
+    image: dograhai/dograh-api:1.50.0@sha256:0dd62fff64baaff59651081d9c5bb5bd6371fcff163f1dbbf79d75591a792487
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: local
+      LOG_LEVEL: INFO
+      # Set DOGRAH_ENABLE_SIGNUP=false in dograh/.env after creating the first account.
+      ENABLE_SIGNUP: ${DOGRAH_ENABLE_SIGNUP:-true}
+      # Local only: no public origin.
+      PUBLIC_BASE_URL: ""
+      PUBLIC_HOST: ""
+      # Dograh builds transcript/recording links from this; FluentAI allows it in DOGRAH_TRANSCRIPT_LOCAL_ORIGINS.
+      BACKEND_API_ENDPOINT: http://localhost:${DOGRAH_API_PORT:-8020}
+      DATABASE_URL: postgresql+asyncpg://postgres:${DOGRAH_POSTGRES_PASSWORD:-postgres}@dograh-postgres:5432/postgres
+      REDIS_URL: redis://:${DOGRAH_REDIS_PASSWORD:-redissecret}@dograh-redis:6379
+      ENABLE_AWS_S3: "false"
+      MINIO_ENDPOINT: dograh-minio:9000
+      # Must include the scheme (checked by api/services/filesystem/minio.py). Signed links point here.
+      MINIO_PUBLIC_ENDPOINT: http://localhost:${DOGRAH_MINIO_PORT:-9020}
+      MINIO_ACCESS_KEY: ${DOGRAH_MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${DOGRAH_MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: voice-audio
+      MINIO_SECURE: "false"
+      FASTAPI_WORKERS: "1"
+      FORWARDED_ALLOW_IPS: "*"
+      OSS_JWT_SECRET: ${DOGRAH_JWT_SECRET:?set DOGRAH_JWT_SECRET in dograh/.env (see dograh/.env.example)}
+      ENABLE_TELEMETRY: "false"
+    ports:
+      - "127.0.0.1:${DOGRAH_API_PORT:-8020}:8000"
+    # The Webhook node calls Next.js on the host as http://host.docker.internal:3000.
+    # No cloudflared tunnel here, but Dograh looks the name up on every health check and a failing
+    # DNS lookup can take ~4 s (UI: "Backend connection failed"); pointing it at loopback fails fast.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "cloudflared:127.0.0.1"
+    depends_on:
+      dograh-postgres:
+        condition: service_healthy
+      dograh-redis:
+        condition: service_healthy
+      dograh-minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/api/v1/health'').read()"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - dograh
+
+  dograh-ui:
+    image: dograhai/dograh-ui:1.50.0@sha256:f1342ec1ea6c9cf193cb680e0a68d6cb3d33d26ce4b5c5f89d4725615b6c23d4
+    restart: unless-stopped
+    environment:
+      HOSTNAME: 0.0.0.0
+      # Server-side only: the browser calls the UI origin, which proxies /api/v1 here.
+      BACKEND_URL: http://dograh-api:8000
+      NODE_ENV: oss
+      ENABLE_TELEMETRY: "false"
+    ports:
+      # Serves the dashboard and /embed/dograh-widget.js.
+      - "127.0.0.1:${DOGRAH_UI_PORT:-3020}:3010"
+    depends_on:
+      dograh-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3010 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - dograh
+
+volumes:
+  pgdata:
+  redis:
+  minio:
+
+networks:
+  dograh:

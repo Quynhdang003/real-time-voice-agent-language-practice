@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Templates with variable names only (no secrets) are committed.
+!.env.example
+
+# Dograh backups (database dumps and recordings)
+/dograh/backups/
 
 # vercel
 .vercel

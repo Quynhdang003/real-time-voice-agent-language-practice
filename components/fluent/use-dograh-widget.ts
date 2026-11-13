@@ -4,8 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createVoiceCall, type VoiceState } from "@/lib/dograh/call";
 import { isDograhWidget } from "@/lib/dograh/widget";
+import { buildDograhContext } from "@/lib/practice/dograh-context";
+import type { Accent } from "@/lib/practice/profile";
 import { practiceSessionHref, type PracticeSession } from "@/lib/practice/session";
 import type { CallEvent } from "@/lib/practice/call-state";
+
+// Referenced statically so Next.js inlines the public values into the client bundle.
+const widgetSources: Record<Accent, string | undefined> = {
+  american: process.env.NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN,
+  british: process.env.NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH,
+};
 
 async function saveEvent(sessionId: string, event: CallEvent) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -24,7 +32,7 @@ async function saveEvent(sessionId: string, event: CallEvent) {
   throw new Error("Unable to save call event");
 }
 
-export function useDograhWidget(session: PracticeSession) {
+export function useDograhWidget(session: PracticeSession, learnerName: string) {
   const router = useRouter();
   const controller = useRef<ReturnType<typeof createVoiceCall> | null>(null);
   const [state, setState] = useState<VoiceState>(() => ({
@@ -51,8 +59,12 @@ export function useDograhWidget(session: PracticeSession) {
     // A separate same-origin document gives each session its own widget instance.
     // Removing it cancels even a pending getUserMedia/start, preventing late audio.
     try {
-      const source = process.env.NEXT_PUBLIC_DOGRAH_WIDGET_SRC?.trim();
-      if (!source) throw new Error("Voice calling is not configured. Set NEXT_PUBLIC_DOGRAH_WIDGET_SRC and restart the app.");
+      // One Dograh workflow per accent (the TTS voice differs); legacy v1 sessions use the American one.
+      const accent = session.profile?.accent ?? "american";
+      const source = widgetSources[accent]?.trim();
+      if (!source) {
+        throw new Error(`Voice calling is not configured for the ${accent} voice. Set NEXT_PUBLIC_DOGRAH_WIDGET_SRC_${accent.toUpperCase()} and restart the app.`);
+      }
       const url = new URL(source);
       if (!["https:", "http:"].includes(url.protocol) || !url.searchParams.get("token")) {
         throw new Error("The Dograh embed URL is invalid. Use the script URL from the workflow's Embed settings.");
@@ -67,10 +79,8 @@ export function useDograhWidget(session: PracticeSession) {
       frame.title = "Dograh voice connection";
       frame.hidden = true;
       frame.allow = "microphone; autoplay";
-      const context = {
-        language: session.language.name, topic: session.topic.name, level: session.level,
-        tutor_name: session.tutor.name, duration_minutes: session.durationMinutes,
-      };
+      // Becomes the run's initial_context; session_id links the end-of-call webhook to this session.
+      const context = buildDograhContext(session, learnerName);
       // about:blank reports location.origin as "null" to the upstream widget.
       // A real same-origin document preserves Dograh's allowed-domain checks.
       frame.src = "/dograh-frame.html";
@@ -123,7 +133,7 @@ export function useDograhWidget(session: PracticeSession) {
       controller.current = null;
       release();
     };
-  }, [session, router]);
+  }, [session, learnerName, router]);
 
   return { ...state, loaded, start: () => controller.current?.start(), end: () => controller.current?.end() };
 }
