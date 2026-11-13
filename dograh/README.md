@@ -1,93 +1,102 @@
-# Dograh của FluentAI (tự host, local)
+# Dograh Cloud cho FluentAI
 
-Stack Dograh **1.50.0** riêng cho FluentAI, tách khỏi stack của ai-companion. Image được ghim theo cả tag lẫn
-digest trong `docker-compose.yml`.
+FluentAI dùng **Dograh Cloud** (https://app.dograh.com) cho cuộc gọi giọng nói, ở cả bản phát triển
+(`localhost:3000`) lẫn bản production (https://real-time-voice-agent-language-prac-one.vercel.app).
 
-| Thành phần | URL trên máy | Ghi chú |
-|---|---|---|
-| Dashboard (UI) | http://localhost:3020 | Tạo tài khoản, workflow, credential, embed token |
-| API | http://localhost:8020 | Widget gọi `/api/v1/public/embed/init`; link transcript bắt đầu bằng URL này |
-| MinIO | http://localhost:9020 (console 9021) | Link transcript redirect 302 sang đây (ký 1 giờ) |
+- **Đặc tả workflow** (node, prompt, biến, điều kiện chuyển, webhook) nằm ở [`workflow-spec.md`](workflow-spec.md).
+- **Stack Docker cũ** (`docker-compose.yml`, `.env.example`, `scripts/backup.ps1`, `scripts/restore.ps1`, các lệnh
+  `npm run dograh:up|down|logs|backup`) không còn dùng, và sẽ bị xoá ở DC-02.
 
-Các cổng không trùng với ai-companion (3010/8010/9000), nên hai stack chạy song song được. Next.js của FluentAI
-chạy trên host tại `localhost:3000`; Dograh trong Docker gọi webhook qua `http://host.docker.internal:3000`.
+## 1. Chuẩn bị
 
-> **Cảnh báo:** `docker compose -f dograh/docker-compose.yml down -v` (có `-v`) xóa **toàn bộ** workflow, run,
-> credential và recording. Lệnh `npm run dograh:down` (không có `-v`) giữ nguyên dữ liệu. Hãy backup trước
-> mỗi lần nâng cấp hoặc dọn Docker.
+1. Đăng nhập https://app.dograh.com.
+2. Cấu hình provider LLM, STT và TTS. Có thể dùng provider có sẵn của Dograh hoặc key của bạn. STT chọn tiếng Anh.
+3. Tạo một **API key** trong dashboard. Thêm vào `.env.local` ở thư mục gốc FluentAI:
 
-## 1. Khởi động lần đầu
+   ```dotenv
+   DOGRAH_API_BASE_URL=https://app.dograh.com
+   DOGRAH_API_KEY=<API key>
+   ```
 
-1. Tạo `dograh/.env` từ `dograh/.env.example` (file này đã được git ignore) và điền `DOGRAH_JWT_SECRET`.
-   Trong PowerShell có thể sinh giá trị bằng:
-   `-join ((1..48) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })`
-2. `npm run dograh:up`. Lệnh chờ tới khi cả 5 container healthy, mất khoảng 1 phút.
-3. Kiểm tra http://localhost:8020/api/v1/health trả 200.
-4. Mở http://localhost:3020 và đăng ký tài khoản đầu tiên.
-5. Đặt `DOGRAH_ENABLE_SIGNUP=false` trong `dograh/.env`, rồi chạy lại `npm run dograh:up`.
-6. Trong dashboard, cấu hình provider (LLM, STT, TTS) bằng key của bạn.
+   Hai biến này chỉ dùng cho script import/export ở máy. **Không** đặt chúng trên Vercel.
 
 ## 2. Tạo 2 workflow (American, British)
 
-Đặc tả đầy đủ (node, prompt, biến, điều kiện chuyển, webhook) nằm ở [`workflow-spec.md`](workflow-spec.md).
+**Cách nhanh: import qua API.**
 
-**Cách nhanh, import qua API:**
-
-1. Trong dashboard, tạo một API key, rồi đặt `DOGRAH_API_KEY=<key>` (và `DOGRAH_API_BASE_URL=http://localhost:8020`)
-   trong `.env.local` ở thư mục gốc FluentAI.
-2. Chạy `npm run dograh:seed` để dựng `dograh/workflows/fluentai-tutor.seed.json` từ đặc tả.
-3. Chạy hai lần import:
+1. `npm run dograh:seed`: dựng `workflows/fluentai-tutor.seed.json` từ đặc tả.
+2. Import hai lần:
    - `npm run dograh:import -- "FluentAI Tutor - American"`
    - `npm run dograh:import -- "FluentAI Tutor - British"`
 
+   Nếu lệnh báo 404 hoặc 401, API của Dograh Cloud có thể nằm ở một địa chỉ khác `https://app.dograh.com/api/v1`.
+   Khi đó, gửi cho tôi mã lỗi (không gửi key), rồi tạm làm theo cách thủ công.
+
 **Cách thủ công:** tạo node và edge trên dashboard đúng như `workflow-spec.md`, rồi dán từng khối prompt.
 
-**Sau đó, với mỗi workflow:** làm các bước trong mục "Per-workflow settings" của đặc tả.
+## 3. Cấu hình từng workflow
 
-1. **Models:** STT tiếng Anh. TTS chọn giọng American cho workflow American và giọng British cho workflow
-   British; tốc độ để mặc định.
-2. **Credential:** tạo một credential `bearer_token` có giá trị đúng bằng `DOGRAH_WEBHOOK_SECRET` của FluentAI, rồi
-   chọn nó trong node `Send transcript to FluentAI`.
-   **Giữ node này ở trạng thái `Enabled: off` cho tới khi FluentAI hoàn thành TR-01.**
-3. **Publish** workflow.
-4. **Embed:** chọn Voice, Headless, tắt Auto start, allowed domain `localhost:3000`. URL script phải có dạng
-   `http://localhost:3020/embed/dograh-widget.js?token=<token>&apiEndpoint=http://localhost:8020`.
-   Thiếu `apiEndpoint` thì widget gọi nhầm sang cổng 8000.
-5. **Export:** `npm run dograh:export -- <workflowId> fluentai-tutor-american` (tương tự cho british), rồi commit
-   file trong `dograh/workflows/`. File export không chứa credential, token hay key.
+Làm theo mục "Per-workflow settings" của đặc tả:
 
-## 3. Nối FluentAI với stack mới
+1. **Models:** TTS chọn giọng American cho workflow American, giọng British cho workflow British. Tốc độ để
+   mặc định.
+2. **Credential:** tạo một credential `bearer_token` tên `FluentAI webhook`. Giá trị đúng bằng
+   `DOGRAH_WEBHOOK_SECRET` đã đặt trên Vercel. Chọn credential này trong node `Send transcript to FluentAI` của
+   cả hai workflow.
+   - Endpoint của node đã có sẵn trong seed:
+     `https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook`.
+   - **Giữ node ở trạng thái `Enabled: off` cho tới khi TR-01 được deploy.**
+3. **Thời lượng tối đa của cuộc gọi:** nếu Dograh Cloud có cài đặt này, đặt 20 phút.
+4. **Publish** workflow.
+5. **Embed:** chọn Voice, Headless, tắt Auto start.
+   - Allowed domains: `real-time-voice-agent-language-prac-one.vercel.app` và `localhost:3000`.
+   - Copy nguyên URL script trong hộp thoại embed (dạng `https://app.dograh.com/embed/dograh-widget.js?token=…`).
 
-Cập nhật `.env.local` theo [`../.env.example`](../.env.example), rồi **khởi động lại** `npm run dev`:
+## 4. Nối FluentAI với Dograh Cloud
 
-```dotenv
-NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN=http://localhost:3020/embed/dograh-widget.js?token=<token American>&apiEndpoint=http://localhost:8020
-NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH=http://localhost:3020/embed/dograh-widget.js?token=<token British>&apiEndpoint=http://localhost:8020
-DOGRAH_WEBHOOK_SECRET=<cùng giá trị với credential bearer_token>
-DOGRAH_TRANSCRIPT_MODE=local
-DOGRAH_TRANSCRIPT_LOCAL_ORIGINS=http://localhost:8020,http://localhost:9020
-```
+Tên biến **không** có tiền tố `NEXT_PUBLIC_`. Biến chỉ nằm ở server, nên token không lọt vào JS công khai (DG-05).
 
-- Xóa biến cũ `NEXT_PUBLIC_DOGRAH_WIDGET_SRC`, vì nó trỏ tới quick tunnel đã chết và không còn được đọc.
-- Kiểm tra:
-  1. Tạo một phiên có accent American và gọi thử: widget tải được, cuộc gọi chuyển `completed` và có
-     `workflowRunId`.
-  2. Lặp lại với British.
-  3. Trong DevTools → Network, request `/api/v1/public/embed/init` phải chứa `context_variables.session_id`.
+1. **Vercel:** Settings → Environment Variables, thêm cho Production và Preview, rồi **Redeploy**:
 
-## 4. Backup và restore
+   ```dotenv
+   DOGRAH_WIDGET_SRC_AMERICAN=<URL script của workflow American>
+   DOGRAH_WIDGET_SRC_BRITISH=<URL script của workflow British>
+   ```
 
-- Backup: `npm run dograh:backup`. Lệnh tạo `dograh/backups/<thời điểm>/` (git ignore) gồm `dograh-postgres.dump` và
-  `dograh-minio.tgz`. Nên chạy thêm `npm run dograh:export` để có bản JSON của workflow.
-- Restore (**thay thế toàn bộ dữ liệu hiện tại**):
-  `powershell -ExecutionPolicy Bypass -File dograh/scripts/restore.ps1 -BackupDir dograh/backups/<thời điểm> -Force`
-- Hai script cần stack đang chạy, và cần `dograh/.env` có `DOGRAH_JWT_SECRET`.
+2. **`.env.local`:**
+   - thêm hai biến trên;
+   - **xoá** `NEXT_PUBLIC_DOGRAH_WIDGET_SRC`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN`,
+     `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH`, `DOGRAH_TRANSCRIPT_MODE` và `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS`;
+   - khởi động lại `npm run dev`.
+
+   Nếu gọi từ `localhost:3000` thất bại vì widget gọi `http://localhost:8000` (xem DevTools → Network), thêm
+   `&apiEndpoint=<origin API của Dograh Cloud>` vào **giá trị trong `.env.local`**.
+
+## 5. Kiểm tra (DC-01) và gửi lại kết quả
+
+1. Trên bản production, tạo một phiên accent American và gọi thử. Widget phải tải được, và cuộc gọi chuyển
+   sang `completed`.
+2. Lặp lại với accent British, rồi lặp lại cả hai trên `localhost:3000`.
+3. Trong DevTools → Network, request `/api/v1/public/embed/init` phải có `context_variables` với
+   `session_id` và đủ 18 khoá.
+4. Trong dashboard, mở run vừa gọi và tải transcript. Ghi lại **tên host** của địa chỉ cuối cùng sau khi trình
+   duyệt chuyển hướng (chỉ phần host, không gửi cả URL có chữ ký).
+5. Gửi cho tôi:
+   - host của request `/embed/init`;
+   - có cần `apiEndpoint` khi chạy local không;
+   - host lưu trữ transcript (bước 4);
+   - Dograh Cloud có giới hạn chi tiêu hoặc thời lượng cuộc gọi tối đa không.
+
+   Tôi sẽ ghi các thông tin này vào `context/api-contracts.md` → "Observed on Dograh Cloud", và thêm host lưu
+   trữ vào `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`.
+6. **Export:** `npm run dograh:export -- <workflowId> fluentai-tutor-american` (làm tương tự cho British).
+   File export không chứa credential, token hay key, nên được commit vào `workflows/`.
 
 ## Sự cố thường gặp
 
-- **Widget báo "Domain not allowed":** thêm `localhost:3000` vào allowed domains của embed token.
-- **Webhook không tới FluentAI:**
-  - Next.js phải đang chạy trên host ở cổng 3000. `next dev` mặc định nghe trên mọi interface; nếu không, chạy
-    `next dev -H 0.0.0.0`.
-  - Xem log bằng `npm run dograh:logs`.
-- **`DOGRAH_JWT_SECRET` chưa được đặt:** mọi lệnh `docker compose` với file này đều cần `dograh/.env`.
+- **Widget báo "Domain not allowed":** domain đang mở chưa có trong allowed domains của embed token. Preview
+  deployment của Vercel không được thêm vào, vì vậy chỉ gọi được trên production và `localhost:3000`.
+- **`/voice-call` báo "Voice calling is not configured":** thiếu `DOGRAH_WIDGET_SRC_*`. Trên Vercel, nhớ redeploy
+  sau khi thêm biến. Ở máy, nhớ khởi động lại `npm run dev`.
+- **Widget gọi `localhost:8000` khi chạy local:** xem bước 4.2.
+- **Import báo 401:** kiểm tra `DOGRAH_API_KEY`. **Báo 404:** kiểm tra `DOGRAH_API_BASE_URL` (xem mục 2).

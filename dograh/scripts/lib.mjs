@@ -8,9 +8,10 @@ export function dograhApiConfig() {
   if (existsSync(envFile)) {
     try { process.loadEnvFile(envFile); } catch { /* fall back to the process environment */ }
   }
-  const baseUrl = (process.env.DOGRAH_API_BASE_URL || "http://localhost:8020").trim().replace(/\/+$/, "");
+  // Dograh Cloud (DC-01). The API is expected under https://app.dograh.com/api/v1; DC-01 confirms it.
+  const baseUrl = (process.env.DOGRAH_API_BASE_URL || "https://app.dograh.com").trim().replace(/\/+$/, "");
   const apiKey = (process.env.DOGRAH_API_KEY || "").trim();
-  if (!apiKey) throw new Error("Set DOGRAH_API_KEY (an API key from the Dograh dashboard) in .env.local.");
+  if (!apiKey) throw new Error("Set DOGRAH_API_KEY (an API key from the Dograh Cloud dashboard) in .env.local.");
   return { baseUrl, apiKey };
 }
 

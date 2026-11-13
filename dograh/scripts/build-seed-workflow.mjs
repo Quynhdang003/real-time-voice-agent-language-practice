@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 export const SPEC_PATH = resolve(here, "..", "workflow-spec.md");
 export const SEED_PATH = resolve(here, "..", "workflows", "fluentai-tutor.seed.json");
-export const WEBHOOK_URL = "http://host.docker.internal:3000/api/dograh/transcript-webhook";
+// The production domain (DEP-01): Dograh Cloud cannot reach localhost.
+export const WEBHOOK_URL = "https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook";
 
 export function parseSpecBlocks(markdown) {
   const blocks = {};

@@ -9,8 +9,12 @@ import { UserAvatar } from "@/components/fluent/user-avatar";
 import { practiceSessionHref, type PracticeSession } from "@/lib/practice/session";
 import type { SessionLearner } from "@/lib/practice/read-session";
 
-export function VoiceCallExperience({ session, learner }: { session: PracticeSession; learner: SessionLearner }) {
-  const call = useDograhWidget(session, learner.name);
+export function VoiceCallExperience({ session, learner, widgetSrc }: {
+  session: PracticeSession;
+  learner: SessionLearner;
+  widgetSrc?: string;
+}) {
+  const call = useDograhWidget(session, learner.name, widgetSrc);
   const busy = ["connecting", "active", "ending"].includes(call.status);
   const active = call.status === "active";
   const remaining = Math.max(0, session.durationMinutes * 60 - call.elapsed);

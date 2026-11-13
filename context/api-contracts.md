@@ -206,7 +206,7 @@ Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it
 Decided 2026-11-13: registration stays open, and the number of calls per learner is limited to control cost.
 
 - **Applies to:** `full` sessions of approved accounts. Trial sessions follow the trial rule, and the admin is exempt.
-- **Limit:** `PRACTICE_DAILY_CALL_LIMIT` calls per learner per calendar day in `Asia/Ho_Chi_Minh`. It is a positive integer; unset or invalid → the default 5 (proposed).
+- **Limit:** `PRACTICE_DAILY_CALL_LIMIT` calls per learner per calendar day in `Asia/Ho_Chi_Minh`. It is a positive integer; unset or invalid → the default 5 (decided 2026-11-13).
 - **Counting:** one created practice session = one call, because a session allows only one call (the call state never reopens). A failed call is not given back, because call events come from the browser.
 - **`POST /api/practice-setup`:**
   - Runs inside the ACC-01 transaction, for approved accounts only.
@@ -241,7 +241,7 @@ Decided 2026-11-13: registration stays open, and the number of calls per learner
 
 - **Webhook node** (configured in Dograh Cloud, specified in `dograh/workflow-spec.md`):
   - `http_method: POST`
-  - `endpoint_url: https://<production-domain>/api/dograh/transcript-webhook` (DC-01 replaces the old `http://host.docker.internal:3000/…` in the spec). The same URL is used in both workflows. Deliveries for calls started on `localhost:3000` also go there.
+  - `endpoint_url: https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook` (in the spec and seed since batch 1, replacing `http://host.docker.internal:3000/…`). The same URL is used in both workflows. Deliveries for calls started on `localhost:3000` also go there.
   - credential `bearer_token` = `DOGRAH_WEBHOOK_SECRET` (the value set on Vercel)
   - no custom headers
   - `payload_template`:
@@ -471,8 +471,10 @@ Derived from `lib/dograh/widget.ts` (its comment: "Verified against Dograh's pub
 embed/dograh-widget.js (voice, headless mode)") and `use-dograh-widget.ts`.
 Re-verify against Dograh Cloud (DC-01).
 
-- Embed: the script URL in `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH` (one per accent workflow, chosen by `session.profile.accent`, DG-04) must be http(s) with a `token` query parameter, and HTTPS when the page is HTTPS (always true on Vercel and Dograh Cloud).
-  - **[planned DG-05]** The variables become server-only `DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH`. The `/voice-call` server component picks the URL by accent and passes it to the client as a prop, only when the cookie's user owns the session and its `status` is `ready`. Otherwise no URL is sent. The URL checks stay in `use-dograh-widget.ts`, and the token never appears in `.next/static`.
+- Embed: the script URL in the server-only `DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH` (one per accent workflow, chosen by `session.profile.accent`; v1 sessions → American) must be http(s) with a `token` query parameter, and HTTPS when the page is HTTPS (always true on Vercel and Dograh Cloud).
+  - **[done DG-05]** The `/voice-call` server component calls `selectWidgetSource(session, process.env)` (`lib/dograh/widget.ts`) at request time. It passes the URL to the client as the `widgetSrc` prop only when `getPracticeSession` found the cookie user's own session and its `status` is `ready`. Otherwise no URL is sent.
+  - A missing variable makes the client show the variable name (`widgetSourceVariable`). The URL checks stay in `use-dograh-widget.ts`.
+  - The old `NEXT_PUBLIC_DOGRAH_WIDGET_SRC*` names are no longer read, and a test forbids them in `app/`, `components/` and `lib/`.
   - The widget reads `token`, `apiEndpoint` and `environment` from its own script URL (`initializeWidget` in `public/embed/dograh-widget.js`). In 1.50.0, without `apiEndpoint` it uses `http://localhost:8000` on localhost. With Dograh Cloud, local development on `localhost:3000` may therefore need `apiEndpoint=<Cloud API origin>` in the URL. DC-01 checks this.
   - Allowed domains are matched by host and port (`validate_embed_origin`): use `<production-domain>` and `localhost:3000`. An empty list allows any origin, which is not used on the public deployment. The page's domain must be in the embed's allowed domains (configured in Dograh Cloud). The script runs inside the same-origin `/dograh-frame.html`, because `about:blank` reports origin `null`.
 - Required embed config: `getState().config` with `widgetType: "voice"`, `embedMode: "headless"`, `autoStart` false.

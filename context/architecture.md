@@ -15,7 +15,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 | File store | Firebase Storage (client SDK)                                 | Optional profile photos                                           |
 | Voice      | **[planned DC-01]** Dograh Cloud, `https://app.dograh.com` (hosted; the version is set by Dograh). Embed widget: voice, headless. The self-hosted Dograh 1.50.0 stack (DG-01) is **[retired]** | Real-time English tutor; end-of-call Webhook node                 |
 | AI review  | Google Gemini via `@google/genai`, model `gemini-3.5-flash-lite` (available, checked 2026-11-09) | Structured JSON review of the transcript                          |
-| Hosting    | **[planned DEP-01]** Vercel, Hobby plan: a new project (Git integration, Production Branch `main`, default `<project>.vercel.app` domain) | Serves pages and route handlers as Node.js Functions; `after()` runs through Vercel's `waitUntil` |
+| Hosting    | **[done DEP-01]** Vercel, Hobby plan: a new project (Git integration, Production Branch `main`, `real-time-voice-agent-language-prac-one.vercel.app`) | Serves pages and route handlers as Node.js Functions; `after()` runs through Vercel's `waitUntil` |
 | Runtime    | Node.js 24.x on Vercel; `next dev` on `localhost:3000` for development | `patch-package` (`jwks-rsa`) kept for Firebase Admin on Vercel    |
 | Tests      | `node:test` + `tests/helpers/load-ts.mjs`                     | Logic tests with mocked providers                                 |
 
@@ -111,7 +111,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 - The ai-companion project's Dograh (API `:8010`, UI `:3010`, MinIO `:9000`) is
   not used by FluentAI.
 
-## Deployment (Vercel) **[planned DEP-01]**
+## Deployment (Vercel) **[done DEP-01, 2026-11-13]**
 
 - **Project:** a new Vercel project on the **Hobby** plan, created in DEP-01
   and linked to the GitHub repo. The Production Branch is `main`, so every
@@ -121,8 +121,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 - **Build:** `npm ci` (its `postinstall` applies `patches/jwks-rsa+4.1.0.patch`),
   then `next build`, on Node.js 24.x from `package.json` `engines`.
 - **Domain:** the new project's default production domain,
-  `<project>.vercel.app`. These files write it as `<production-domain>` until
-  DEP-01 records the real name. No custom domain. The Dograh embed tokens, the
+  **`real-time-voice-agent-language-prac-one.vercel.app`** (recorded in
+  DEP-01, 2026-11-13). The context files write it as `<production-domain>`.
+  No custom domain. The Dograh embed tokens, the
   Webhook node and the Firebase authorized domains all use it, so renaming the
   project later means re-configuring them.
 - **Deployment Protection:** Preview deployments stay protected (the Vercel
@@ -257,11 +258,10 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     the Webhook node's `bearer_token` credential (Dograh sends no signature).
     It travels over HTTPS from Dograh Cloud to the production domain.
 - The embed token sits in the widget script URL.
-  - **Current (DG-04):** it is in the public JS bundle (`NEXT_PUBLIC_*`), so
-    anyone, even without an account, can read it.
-  - **[planned DG-05]** The URLs become server-only. `/voice-call` passes the
-    URL for the session's accent only to the owner of a `ready` session, so
+  - **[done DG-05]** The URLs are server-only. `/voice-call` passes the URL
+    for the session's accent only to the owner of a `ready` session, so
     anonymous visitors and learners without a callable session never see it.
+    Before DG-05 it was in the public JS bundle (`NEXT_PUBLIC_*`).
   - A learner in a call can still read the token. Allowed domains stop
     browsers on other origins, but not scripted requests. This residual risk
     is accepted for the thesis.
@@ -283,10 +283,10 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
    - **[done DG-04]** The script is chosen by the session's accent:
      `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH`; v1 sessions use
      American. Each points at its own workflow's embed token. **[planned
-     DC-01]** Both are Dograh Cloud script URLs. **[planned DG-05]** They
-     become server-only `DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH`. The
-     `/voice-call` server component picks the URL and passes it as a prop,
-     only for the owner's `ready` session.
+     DC-01]** Both are Dograh Cloud script URLs. **[done DG-05]** They are
+     server-only `DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH`. The `/voice-call`
+     server component picks the URL (`selectWidgetSource`) and passes it as
+     the `widgetSrc` prop, only for the owner's `ready` session.
    - **[done SET-05]** The context is the 18 v2 keys from `buildDograhContext`,
      with `session_id` first (see `api-contracts.md`).
 2. **Start Call** calls `widget.start()` synchronously in the click. The widget
@@ -364,7 +364,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     - scores are integers 1–5.
 13. **[done SET-05]** `"none"` and `"; "`-joined lists exist only in the
     Dograh context. Firestore stores `null` / arrays.
-14. **[planned DEP-01, DG-05]** Every FluentAI variable is server-only (Vercel
+14. **[done DEP-01, DG-05]** Every FluentAI variable is server-only (Vercel
     project settings, `.env.local`); none is `NEXT_PUBLIC_*`. The only
     configuration value that reaches the browser is the widget script URL for
     one callable session, passed as a prop by `/voice-call`. The Dograh API
@@ -397,14 +397,14 @@ variable there.
 | --- | --- | --- | --- |
 | `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | `firebase/admin.ts` | V, L | Required. `firebase/admin.ts` turns `\n` escapes in the private key into newlines |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | `lib/ai/gemini.ts` | V, L | Required for reviews |
-| `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH` | `use-dograh-widget.ts` | Neither, after DG-05 | Current names (DG-04), inlined into the public bundle. **[planned DG-05]** Renamed to the server-only variables below. The old `NEXT_PUBLIC_DOGRAH_WIDGET_SRC` is no longer read |
-| `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | `/voice-call` page (server) → `use-dograh-widget.ts` prop | V, L | **[planned DG-05]** Required per accent. Server-only. **[planned DC-01]** Dograh Cloud script URLs, copied from the Cloud embed dialog (e.g. `https://app.dograh.com/embed/dograh-widget.js?token=…`; whether `apiEndpoint` is needed is checked in DC-01) |
-| `PRACTICE_DAILY_CALL_LIMIT` | `POST /api/practice-setup`, the home page | V, L | **[planned LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (proposed, see Open Questions). Server-only; the page receives the computed count |
+| `NEXT_PUBLIC_DOGRAH_WIDGET_SRC`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH` | nothing | Neither | No longer read since DG-05 (they put the token into the public bundle). Delete them from `.env.local` |
+| `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | `/voice-call` page (server, `selectWidgetSource`) → `use-dograh-widget.ts` prop | V, L | **[done DG-05]** Required per accent. Server-only. **[planned DC-01]** Dograh Cloud script URLs, copied from the Cloud embed dialog (e.g. `https://app.dograh.com/embed/dograh-widget.js?token=…`; whether `apiEndpoint` is needed locally is checked in DC-01) |
+| `PRACTICE_DAILY_CALL_LIMIT` | `POST /api/practice-setup`, the home page | V, L | **[planned LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
 | `ADMIN_UID` | `lib/practice/access.ts` (`isAdmin`), `/admin`, admin routes | V, L | **[planned ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
 | `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[planned TR-01]** Used as the Bearer token; the same value goes into the Dograh Cloud `bearer_token` credential |
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` | V | Public mode. The code defaults to `app.dograh.com`. **[planned DC-01]** Set to `app.dograh.com` plus the storage host found in DC-01 |
 | `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` | `lib/dograh/server.ts` | Neither | **[retired]** Only for the self-hosted stack. Must stay unset on Vercel. DC-02 removes them from the code |
-| `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export); `DOGRAH_API_KEY` also by the unused `getDograhRun` | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `http://localhost:8020`. **[planned DC-01]** Default and value `https://app.dograh.com` |
+| `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export); `DOGRAH_API_KEY` also by the unused `getDograhRun` | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `https://app.dograh.com` (since batch 1; DC-01 confirms the API path) |
 | `DOGRAH_JWT_SECRET`, `DOGRAH_*_PASSWORD`, `DOGRAH_MINIO_ROOT_*`, `DOGRAH_ENABLE_SIGNUP`, `DOGRAH_*_PORT` | `dograh/docker-compose.yml` via `dograh/.env` | Neither | **[retired]** Self-hosted stack only; removed in DC-02 |
 | `DOGRAH_WORKFLOW_ID` | `getDograhRun` (unused) | Neither | **[planned TR-01]** Removed along with `getDograhRun`. The scripts take workflow IDs as arguments |
 | `TEST_BASE_URL`, `BROWSER_TEST_TOOLING` | `scripts/*` | Shell | Test scripts only. `TEST_BASE_URL=https://<production-domain>` for the deployment smoke check |

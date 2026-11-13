@@ -144,8 +144,9 @@ part of the target since 2026-11-13.
 
 - **Production:** a new Vercel project on the Hobby plan. It builds the `main`
   branch (Node.js 24.x) and serves it on the project's default HTTPS domain
-  (`<project>.vercel.app`, written `<production-domain>` in these files). The
-  old `production` branch is deleted.
+  `https://real-time-voice-agent-language-prac-one.vercel.app`, written
+  `<production-domain>` in these files. The old `production` branch is
+  deleted. **[done DEP-01, 2026-11-13]**
 - **Dograh Cloud:** two workflows (American, British) with one embed token
   each. The allowed domains are the production domain and `localhost:3000`.
   The Webhook node posts to the production domain only.
@@ -186,7 +187,7 @@ part of the target since 2026-11-13.
 
 - Registration stays open. To control cost, each **approved** learner can
   start a limited number of full calls per day (`PRACTICE_DAILY_CALL_LIMIT`,
-  proposed default 5). The day is the calendar day in `Asia/Ho_Chi_Minh`.
+  default 5). The day is the calendar day in `Asia/Ho_Chi_Minh`.
   Trial calls are covered by the trial rule above. The admin is exempt.
 - One practice session allows one call, so each created session uses one call
   from the limit. A call that fails is not given back, because call events
