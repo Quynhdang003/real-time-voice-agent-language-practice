@@ -95,7 +95,7 @@ S = session cookie required. All routes below are S.
 | `/` | Signed in | Practice setup |
 | `/voice-call?sessionId=…` | Signed in, owner | Failures render `SessionAccessNotice`: `missing_id`, `invalid_id`, `not_found`, `invalid_data`, `unavailable` |
 | `/review?sessionId=…` | Signed in, owner | Same notices. Shows the review only when `status` is `completed` |
-| `/admin` **[planned ACC-03]** | Signed in, `ADMIN_UID` only | Everyone else gets `notFound()` (404), never a hint that the page exists |
+| `/admin` **[done ACC-03]** | Signed in, `ADMIN_UID` only | Everyone else gets `notFound()` (404), never a hint that the page exists |
 
 ## Dograh-facing (secret header)
 
@@ -195,7 +195,7 @@ Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it
 | Route | Auth | Success | Errors |
 |---|---|---|---|
 | `POST /api/access-request` `{message?}` (**done ACC-02**: `requestAccess` in `access.ts`, adapter `requestUserAccess` in `access-server.ts`) | S | 200 `{success: true, access: {status: "pending", requestedAt}}` | 401; 400 invalid JSON or `message` > 300 chars after trimming; 409 `{reason: "already_pending" \| "already_approved"}` (the admin also gets `already_approved`); 500 |
-| `POST /api/admin/access/[uid]` `{decision}` (ACC-03) | S + admin | 200 `{success: true, access: {status, decidedAt}}`; an identical repeat is a no-op 200 | 404 for any non-admin caller (the route looks absent); 400 invalid JSON, invalid `uid` or `decision`; 404 `not_found` (no such user document); 409 `{reason: "invalid_transition"}`; 500 |
+| `POST /api/admin/access/[uid]` `{decision}` (**done ACC-03**: `decideAccess` in `access.ts`, adapter `decideUserAccess` in `access-server.ts`) | S + admin | 200 `{success: true, access: {status, decidedAt}}`; an identical repeat is a no-op 200 | 404 for any non-admin caller, signed in or not, before the body is read (the route looks absent); 400 invalid JSON, invalid `uid` or `decision`; 404 `not_found` (no such user document); 409 `{reason: "invalid_transition"}`; 500 |
 
 - **Request:** allowed from `none` or `rejected`. It sets `status: "pending"`, `requestedAt`, `requestMessage` (trimmed, whitespace collapsed, `null` if empty) and clears `decidedAt`. The trial state is unchanged.
   - A non-string `message` → 400.

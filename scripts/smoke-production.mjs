@@ -7,7 +7,7 @@ for (const path of ["/sign-in", "/register"]) {
   assert.match(response.headers.get("content-type"), /text\/html/);
   console.log(`PASS ${path}: 200 HTML`);
 }
-for (const path of ["/", "/voice-call?sessionId=session-a", "/review?sessionId=session-a"]) {
+for (const path of ["/", "/voice-call?sessionId=session-a", "/review?sessionId=session-a", "/admin"]) {
   const response = await fetch(new URL(path, base), { redirect: "manual", signal: AbortSignal.timeout(15_000) });
   assert.ok([303, 307, 308].includes(response.status), `${path}: expected authentication redirect, got ${response.status}`);
   assert.equal(new URL(response.headers.get("location"), base).pathname, "/sign-in");
@@ -20,4 +20,11 @@ for (const [method, path] of [["POST", "/api/practice-setup"], ["POST", "/api/pr
   assert.equal(response.status, 401, path);
   assert.equal((await response.json()).success, false);
   console.log(`PASS ${method} ${path}: unauthenticated request rejected`);
+}
+// ACC-03: the admin route looks absent to anyone but the admin, before the body is read.
+{
+  const path = "/api/admin/access/some-user";
+  const response = await fetch(new URL(path, base), { method: "POST", body: "{", signal: AbortSignal.timeout(15_000) });
+  assert.equal(response.status, 404, path);
+  console.log(`PASS POST ${path}: hidden from non-admins (404)`);
 }

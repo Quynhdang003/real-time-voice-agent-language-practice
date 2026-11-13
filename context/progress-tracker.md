@@ -330,6 +330,38 @@ without mocks.
   - **Manual check pending (user, after deploy):** a new account sees the
     trial banner, makes a 1-minute call that is reviewed, then sends a
     request and sees "pending".
+- **C-24** ACC-03 admin side (2026-11-13, batch 2):
+  - `access.ts`: `decideAccess` and `isUserId`:
+    - approve: pending → approved; reject: pending → rejected; revoke:
+      approved → rejected;
+    - an identical repeat is a no-op; anything else → `invalid_transition`;
+    - the admin's own account → `invalid_transition`;
+    - a missing user → `not_found`;
+    - a non-admin → `not_admin`, before any read.
+
+    It also has `toAccessAccountRow` and `accessAccountLists` (pending oldest
+    first, approved newest first, the admin and malformed rows left out).
+  - `access-server.ts`: `isAdminUser`, `decideUserAccess`,
+    `listAccessAccounts` (single-field `access.status` queries, no composite
+    index) and `countPendingRequests` (`count()`).
+  - `POST /api/admin/access/[uid]`: 404 for anyone but the admin, before the
+    body is read; 200 / 400 / 404 `not_found` / 409 `invalid_transition` /
+    500.
+  - `/admin` (`notFound()` for non-admins) with `AdminAccessPanel`. The
+    `(root)` layout passes the admin flag and the pending count to
+    `AppHeader` (link plus badge, admin only).
+  - The smoke script also checks that `/admin` redirects anonymous users and
+    that the admin route answers 404.
+  - Verify: `tests/access.test.mjs` +4 (transitions and no-op repeats,
+    refused transitions without a write, admin-only and input checks before
+    any read, lists); `tests/api.test.mjs` +1 (404 before the body,
+    mapping); `npm test` 87/87; typegen + `tsc`; build (`/admin`,
+    `/api/admin/access/[uid]`); lint shows only the N-02c baseline;
+    `npm run test:smoke` **13/13** against `next start -p 3100`.
+  - **Manual check pending (user, after deploy):** set `ADMIN_UID` on
+    Vercel, sign in as the admin → the header link appears → approve a
+    request → that learner can choose 10/15/20 minutes; revoke → 403 again;
+    another account gets 404 on `/admin`.
 
 ## In Progress
 
@@ -391,7 +423,6 @@ Rules for every unit:
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **ACC-03** | Admin side: `/admin` page (pending and approved lists), `POST /api/admin/access/[uid]` (approve/reject/revoke), header link with the pending count, admin-only | ACC-02 | Tests: non-admin → 404 on the page and the route; each transition and invalid one (409); a decision about `ADMIN_UID` → 409. On the deployment: approve → the learner creates a full session; revoke → 403 again |
 | **LIM-01** | Daily call limit for approved learners (`api-contracts.md` → Daily call limit). Pure rules in `lib/practice/call-quota.ts`; `users/{uid}.callQuota` checked and incremented in the ACC-01 transaction; 429 `call_limit_reached`; calls left and reset time on `/`; admin exempt; `PRACTICE_DAILY_CALL_LIMIT` (default 5) in `.env.example` and on Vercel. Share the production URL with other people only after this unit | ACC-03 | Tests: under the limit → session created and `used` + 1; at the limit → 429 with no session and no write; a new day resets; concurrent requests never pass the limit; invalid env → default. On the deployment, the limit is reached and the form shows it |
 | **DC-02** | Delete the retired self-hosted stack (confirmed 2026-11-13): `dograh/docker-compose.yml`, `dograh/.env.example`, `backup.ps1` / `restore.ps1`, the `dograh:up|down|logs|backup` scripts, the `local` transcript mode and its variables; update README, tests and context | DC-01 | `npm test`, build and lint pass; no `localhost:8020`, `fluentai-dograh` or `DOGRAH_TRANSCRIPT_MODE` left in code or docs |
 | **TR-01** | Webhook v2: Bearer auth, flat payload, `""` means absent, lookup by `session_id`, run cross-check, idempotent transaction; remove `getDograhRun` / `DOGRAH_WORKFLOW_ID` (fixes N-01a,c,d,e). Then enable the Webhook node in both Cloud workflows | DC-01 | Wrong Bearer → 401; redelivery is a no-op; an old session with the same run ID is untouched; on the deployment, a real Cloud delivery is linked by `session_id` |

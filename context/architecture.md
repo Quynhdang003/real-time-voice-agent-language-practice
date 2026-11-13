@@ -23,7 +23,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 
 - `app/(auth)/` — `/sign-in`, `/register`. Signed-in users are redirected to `/`.
 - `app/(root)/` — `/`, `/voice-call`, `/review`. Anonymous users are redirected
-  to `/sign-in`. **[planned ACC-03]** `/admin`: only the `ADMIN_UID` account;
+  to `/sign-in`. **[done ACC-03]** `/admin`: only the `ADMIN_UID` account;
   any other signed-in user gets `notFound()`.
 - `app/api/` — thin route handlers: authenticate → parse → call `lib/` → map to
   HTTP.
@@ -43,11 +43,15 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - **[done ACC-01]** `access.ts`: pure access rules (`parseUserAccess`,
     `isAdmin`, `accessLevelOf`, `sessionKindFor`). **[done ACC-02]** It also
     has `AccessView`, `accessViewOf`, `canRequestAccess`, `requestAccess` and
-    `formatAccessDate` (Vietnam time). **[planned ACC-03]** It gets the admin
-    transitions.
+    `formatAccessDate` (Vietnam time). **[done ACC-03]** It also has the
+    admin transitions (`decideAccess`, `isUserId`) and the list rows
+    (`toAccessAccountRow`, `accessAccountLists`).
   - **[done ACC-02]** `access-server.ts`: Firestore adapters
     (`getAccessView`, `requestUserAccess`; one transaction on `users/{uid}`,
-    `set` with merge). **[planned ACC-03]** It gets the admin adapters.
+    `set` with merge). **[done ACC-03]** It also has `isAdminUser`,
+    `decideUserAccess`, `listAccessAccounts` (single-field queries on
+    `access.status`, at most 200 each, sorted in memory) and
+    `countPendingRequests` (`count()` for the header badge).
   - **[done ACC-01]** `create-session.ts`: the session-creation transaction
     (`createPracticeSessionForUser`, pure). Its adapter is
     `createPracticeSession` in `server.ts`.
@@ -175,7 +179,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     `day` is the calendar day in `Asia/Ho_Chi_Minh`. Written only by the
     transaction that creates a practice session. A missing field, or a `day`
     other than today, means 0 calls used.
-  - **[done ACC-01: read and `trialUsed`; ACC-02: the request fields; ACC-03 planned: decisions]**
+  - **[done ACC-01: read and `trialUsed`; ACC-02: the request fields; ACC-03: decisions]**
     `access`:
     - `status`: `none | pending | approved | rejected`
     - `trialUsed`: boolean
@@ -392,7 +396,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     server from the stored access, in the same transaction that sets
     `trialUsed` and creates the session. The body never chooses `kind`, and a
     trial account never gets more than one session or more than 1 minute.
-17. **[done ACC-02 for the request route; ACC-03 planned for the admin route]** `access.status` changes only in two places:
+17. **[done ACC-02, ACC-03]** `access.status` changes only in two places:
     the owner's request route (`none` / `rejected` → `pending`) and the admin
     route (`pending` → `approved` / `rejected`, `approved` → `rejected`).
     Both run in transactions. Admin routes and the admin page answer 404 to

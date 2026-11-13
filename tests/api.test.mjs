@@ -156,3 +156,29 @@ test("access request API authenticates, validates JSON and maps request outcomes
   result = { status: "unavailable" };
   assert.equal((await POST(request())).status, 500);
 });
+
+test("admin access API hides itself from non-admins and maps decisions", async () => {
+  let user = null, admin = false, calls = 0, result = { status: "ok", access: { status: "approved", decidedAt: "2026-11-13T10:00:00.000Z" } };
+  const { POST } = loadTs("app/api/admin/access/[uid]/route.ts", {
+    "@/lib/actions/auth.action": { getCurrentUser: async () => user },
+    "@/lib/practice/access-server": {
+      isAdminUser: (uid) => { assert.equal(uid, "admin-uid"); return admin; },
+      decideUserAccess: async (adminId, uid) => { calls++; assert.equal(adminId, "admin-uid"); assert.equal(uid, "user-b"); return result; },
+    },
+  });
+  const uidContext = { params: Promise.resolve({ uid: "user-b" }) };
+  assert.equal((await POST(request({ decision: "approve" }), uidContext)).status, 404);
+  user = { id: "admin-uid" };
+  assert.equal((await POST(new Request("https://app.example.test", { method: "POST", body: "{" }), uidContext)).status, 404,
+    "a non-admin gets 404 before the body is read");
+  assert.equal(calls, 0);
+  admin = true;
+  assert.equal((await POST(new Request("https://app.example.test", { method: "POST", body: "{" }), uidContext)).status, 400);
+  const ok = await POST(request({ decision: "approve" }), uidContext);
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).access.status, "approved");
+  for (const [status, code] of [["invalid", 400], ["not_found", 404], ["invalid_transition", 409], ["not_admin", 404], ["unavailable", 500]]) {
+    result = { status };
+    assert.equal((await POST(request({ decision: "approve" }), uidContext)).status, code, status);
+  }
+});

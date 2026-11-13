@@ -216,3 +216,77 @@ test("the view says when a learner may request access", () => {
   assert.equal(view("none", true).level, "blocked");
   assert.equal(access.formatAccessDate("2026-11-13T18:30:00.000Z"), "14 Nov 2026", "dates use Vietnam time");
 });
+
+// ACC-03: admin decisions and lists.
+function decideStore(users, adminUid = "admin") {
+  const state = { users: structuredClone(users), writes: 0, transactions: 0 };
+  const store = {
+    adminUid, now: () => "2026-11-13T10:00:00.000Z", onError() {},
+    transaction: async (userId, apply) => {
+      state.transactions++;
+      return apply({
+        readUser: async () => state.users[userId],
+        writeUser: (patch) => { state.writes++; state.users[userId] = { ...state.users[userId], ...structuredClone(patch) }; },
+      });
+    },
+  };
+  return { state, decide: (adminUserId, uid, decision) => access.decideAccess(adminUserId, uid, { decision }, store) };
+}
+
+test("the admin approves, rejects and revokes; repeats are no-ops", async () => {
+  const { state, decide } = decideStore({ a: { access: { status: "pending", trialUsed: true, requestMessage: "hi" } },
+    b: { access: { status: "pending" } } });
+  const approved = await decide("admin", "a", "approve");
+  assert.equal(approved.status, "ok");
+  assert.equal(approved.changed, true);
+  assert.deepEqual(state.users.a.access, { status: "approved", trialUsed: true, requestedAt: null,
+    requestMessage: "hi", decidedAt: "2026-11-13T10:00:00.000Z" });
+  assert.equal((await decide("admin", "a", "approve")).changed, false);
+  assert.equal((await decide("admin", "a", "revoke")).access.status, "rejected");
+  assert.equal((await decide("admin", "a", "revoke")).changed, false);
+  assert.equal((await decide("admin", "b", "reject")).access.status, "rejected");
+  assert.equal(state.writes, 3);
+});
+
+test("decisions that do not fit the state are refused without a write", async () => {
+  const { state, decide } = decideStore({ none: {}, approved: { access: { status: "approved" } }, rejected: { access: { status: "rejected" } } });
+  for (const [uid, decision] of [["none", "approve"], ["none", "reject"], ["none", "revoke"], ["approved", "reject"],
+    ["rejected", "approve"]]) {
+    assert.equal((await decide("admin", uid, decision)).status, "invalid_transition", `${uid} ${decision}`);
+  }
+  assert.equal((await decide("admin", "missing", "approve")).status, "not_found");
+  assert.equal(state.writes, 0);
+});
+
+test("only the admin decides; bad input and the admin's own account are refused before any read", async () => {
+  const { state, decide } = decideStore({ a: { access: { status: "pending" } } });
+  assert.equal((await decide("user-a", "a", "approve")).status, "not_admin");
+  assert.equal((await access.decideAccess("admin", "a", { decision: "approve" }, {
+    adminUid: undefined, now: () => "", onError() {}, transaction: async () => { throw new Error("no"); },
+  })).status, "not_admin", "without ADMIN_UID nobody is admin");
+  for (const [uid, decision] of [["../a", "approve"], ["a/b", "approve"], ["a", "promote"], ["a", undefined]]) {
+    assert.equal((await decide("admin", uid, decision)).status, "invalid");
+  }
+  assert.equal((await decide("admin", "admin", "revoke")).status, "invalid_transition");
+  assert.equal(state.transactions, 0);
+  const failing = await access.decideAccess("admin", "a", { decision: "approve" }, {
+    adminUid: "admin", now: () => "", onError() {}, transaction: async () => { throw new Error("offline"); },
+  });
+  assert.deepEqual(failing, { status: "unavailable" });
+});
+
+test("admin lists: pending oldest first, approved newest first, admin and bad rows left out", () => {
+  const lists = access.accessAccountLists([
+    { id: "p2", data: { name: "P2", email: "p2@x", access: { status: "pending", requestedAt: "2026-11-12T00:00:00.000Z" } } },
+    { id: "p1", data: { name: "P1", email: "p1@x", access: { status: "pending", requestedAt: "2026-11-10T00:00:00.000Z" } } },
+    { id: "a1", data: { name: "A1", access: { status: "approved", decidedAt: "2026-11-01T00:00:00.000Z" } } },
+    { id: "a2", data: { name: "A2", access: { status: "approved", decidedAt: "2026-11-11T00:00:00.000Z" } } },
+    { id: "admin", data: { name: "Admin", access: { status: "pending" } } },
+    { id: "bad/id", data: { access: { status: "pending" } } },
+    { id: "x", data: null },
+  ], "admin");
+  assert.deepEqual(lists.pending.map((row) => row.uid), ["p1", "p2"]);
+  assert.deepEqual(lists.approved.map((row) => row.uid), ["a2", "a1"]);
+  assert.deepEqual(Object.keys(lists.pending[0]).sort(),
+    ["decidedAt", "email", "name", "requestMessage", "requestedAt", "status", "trialUsed", "uid"]);
+});

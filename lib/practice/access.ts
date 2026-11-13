@@ -146,3 +146,99 @@ export async function requestAccess(userId: string, body: unknown, store: Reques
     return { status: "unavailable" };
   }
 }
+
+// ACC-03: the single admin decides requests on /admin.
+export const accessDecisions = ["approve", "reject", "revoke"] as const;
+export type AccessDecision = (typeof accessDecisions)[number];
+
+// Firebase Auth UIDs of email/password accounts; never a document path.
+export function isUserId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+// approve: pending → approved; reject: pending → rejected; revoke: approved → rejected.
+const decisionTransitions: Record<AccessDecision, { from: AccessStatus; to: AccessStatus }> = {
+  approve: { from: "pending", to: "approved" },
+  reject: { from: "pending", to: "rejected" },
+  revoke: { from: "approved", to: "rejected" },
+};
+
+export type DecideAccessResult =
+  | { status: "ok"; access: UserAccess; changed: boolean }
+  | { status: "not_admin" | "invalid" | "not_found" | "invalid_transition" | "unavailable" };
+
+export type DecideAccessStore = {
+  adminUid: string | undefined;
+  // One transaction on users/{userId} of the account being decided.
+  transaction: <T>(userId: string, apply: (transaction: AccessUserTransaction) => Promise<T>) => Promise<T>;
+  now: () => string;
+  onError: (error: unknown) => void;
+};
+
+// POST /api/admin/access/[uid]. adminUserId comes only from the verified session cookie.
+export async function decideAccess(
+  adminUserId: string, targetUid: unknown, body: unknown, store: DecideAccessStore,
+): Promise<DecideAccessResult> {
+  if (!isAdmin(adminUserId, store.adminUid)) return { status: "not_admin" };
+  const decision = isRecord(body) ? body.decision : undefined;
+  if (!isUserId(targetUid) || !isOneOf(decision, accessDecisions)) return { status: "invalid" };
+  // The admin's own access is never decided: it always has full access.
+  if (isAdmin(targetUid, store.adminUid)) return { status: "invalid_transition" };
+  const { from, to } = decisionTransitions[decision];
+  try {
+    return await store.transaction(targetUid, async (transaction): Promise<DecideAccessResult> => {
+      const user = await transaction.readUser();
+      if (!isRecord(user)) return { status: "not_found" };
+      const access = parseUserAccess(user.access);
+      // An identical repeat (a double click, a retried request) changes nothing.
+      if (access.status === to) return { status: "ok", access, changed: false };
+      if (access.status !== from) return { status: "invalid_transition" };
+      const next: UserAccess = { ...access, status: to, decidedAt: store.now() };
+      await transaction.writeUser({ access: next });
+      return { status: "ok", access: next, changed: true };
+    });
+  } catch (error) {
+    store.onError(error);
+    return { status: "unavailable" };
+  }
+}
+
+// A row on /admin. Only what the admin needs to decide; no profile or session data.
+export type AccessAccountRow = {
+  uid: string;
+  name: string;
+  email: string;
+  status: AccessStatus;
+  trialUsed: boolean;
+  requestedAt: string | null;
+  requestMessage: string | null;
+  decidedAt: string | null;
+};
+
+function boundedText(value: unknown, max: number): string {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+export function toAccessAccountRow(uid: string, data: unknown): AccessAccountRow | null {
+  if (!isUserId(uid) || !isRecord(data)) return null;
+  const access = parseUserAccess(data.access);
+  return {
+    uid, name: boundedText(data.name, 200), email: boundedText(data.email, 320), status: access.status,
+    trialUsed: access.trialUsed, requestedAt: access.requestedAt, requestMessage: access.requestMessage,
+    decidedAt: access.decidedAt,
+  };
+}
+
+// Pending: oldest request first. Approved: latest decision first. The admin account is never listed.
+export function accessAccountLists(
+  documents: readonly { id: string; data: unknown }[], adminUid: string | undefined,
+): { pending: AccessAccountRow[]; approved: AccessAccountRow[] } {
+  const rows = documents
+    .map((document) => toAccessAccountRow(document.id, document.data))
+    .filter((row): row is AccessAccountRow => row !== null && !isAdmin(row.uid, adminUid));
+  const time = (value: string | null) => (value ? Date.parse(value) : 0);
+  return {
+    pending: rows.filter((row) => row.status === "pending").sort((a, b) => time(a.requestedAt) - time(b.requestedAt)),
+    approved: rows.filter((row) => row.status === "approved").sort((a, b) => time(b.decidedAt) - time(a.decidedAt)),
+  };
+}

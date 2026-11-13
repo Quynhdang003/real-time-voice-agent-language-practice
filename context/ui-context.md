@@ -130,6 +130,21 @@ instead of hex values.
     1-minute trial".
   - A blocked account sees a disabled **Full access needed** button with a
     `Lock` icon.
+- Admin (ACC-03):
+  - Header: for the `ADMIN_UID` account only, an **Access requests** link
+    (`ShieldCheck`, outlined `rounded-xl`) sits left of the avatar menu. It
+    has a `rounded-full bg-app-primary` count badge when requests are
+    pending. Below `sm`, the label is hidden and only the icon and badge
+    show.
+  - `/admin` (`components/fluent/admin-access-panel.tsx`): page header
+    (eyebrow "Admin", title "Access requests"), then
+    `lg:grid-cols-2`: **Pending requests** and **Approved accounts** cards.
+  - Each row shows the name, email, request or approval date, a trial badge
+    (`Trial used` slate / `Trial not used` indigo) and the quoted message.
+  - Row actions are `h-10 rounded-xl` buttons: Approve (primary), Reject and
+    Revoke (red outline). Revoke asks for `window.confirm`.
+  - One decision at a time. Then `router.refresh()` updates the lists and
+    the header badge. Errors show under the row (`role="alert"`).
 - Review (planned RV-02):
   - a hero with the overall feedback
   - **Session goals**: a vocabulary table with status badges `used_correctly`
