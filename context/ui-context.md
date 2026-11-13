@@ -113,6 +113,23 @@ instead of hex values.
     - duration pills 10/15/20
   - Reuse the existing selected/unselected pill and button styles. Field errors
     sit under the field (`text-xs text-red-600`, `aria-describedby`).
+- Home access (ACC-02, `components/fluent/access-banner.tsx`):
+  - The banner sits between the welcome header and "Start a new practice".
+    It is hidden for full and admin accounts.
+  - Trial: `border-indigo-100 bg-app-primary-light` with a `Sparkles` icon.
+    Blocked (trial used): `border-amber-200 bg-amber-50` with a
+    `TriangleAlert` icon.
+  - It shows the pending date (indigo, `Clock`) or the decline date (red-700).
+  - The request form has an optional message textarea (counter /300) and a
+    primary **Request full access** button. Results show as a
+    `role="status"` / `role="alert"` line.
+  - Dates use `formatAccessDate` (en-GB, `Asia/Ho_Chi_Minh`), so the server
+    and the browser render the same text.
+  - In the Session card, a trial replaces the duration pills with a
+    "1 minute" note. The summary says "1 min (trial)" and the button "Start
+    1-minute trial".
+  - A blocked account sees a disabled **Full access needed** button with a
+    `Lock` icon.
 - Review (planned RV-02):
   - a hero with the overall feedback
   - **Session goals**: a vocabulary table with status badges `used_correctly`

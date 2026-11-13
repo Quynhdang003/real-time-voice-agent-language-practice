@@ -2,14 +2,16 @@
 
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { MessagesSquare, Mic, Plane, Save, Utensils } from "lucide-react";
+import { Lock, MessagesSquare, Mic, Plane, Save, Utensils } from "lucide-react";
+import { AccessBanner } from "@/components/fluent/access-banner";
 import { ChipInput } from "@/components/fluent/chip-input";
 import { OptionPills } from "@/components/fluent/option-pills";
 import { SessionCard } from "@/components/fluent/session-card";
 import { TutorCard } from "@/components/fluent/tutor-card";
 import type { PracticeSessionSummary, Tutor } from "@/components/fluent/types";
 import { Input } from "@/components/ui/input";
-import { isRecord, type FieldErrors } from "@/lib/practice/guards";
+import { TRIAL_DURATION_MINUTES, accessStatuses, type AccessStatus, type AccessView } from "@/lib/practice/access";
+import { isOneOf, isRecord, type FieldErrors } from "@/lib/practice/guards";
 import {
   LEARNER_NAME_MAX_LENGTH, accents, cefrLevels, correctionStyles, speechPaces, validateLearnerProfile,
   vietnameseAllowedOptions, type Accent, type CorrectionStyle, type LearnerProfileDraft, type SpeechPace,
@@ -52,11 +54,16 @@ type ProfileStatus = { kind: "idle" | "saving" | "saved" | "error"; message?: st
 type HomePracticeSetupProps = {
   userName: string;
   initialProfile: LearnerProfileDraft;
+  initialAccess: AccessView;
   initialWeakPoints?: string[];
 };
 
-export function HomePracticeSetup({ userName, initialProfile, initialWeakPoints = [] }: HomePracticeSetupProps) {
+export function HomePracticeSetup({ userName, initialProfile, initialAccess, initialWeakPoints = [] }: HomePracticeSetupProps) {
   const router = useRouter();
+  // Display only (ACC-02): the server decides the session kind again when the session is created.
+  const [access, setAccess] = useState<AccessView>(initialAccess);
+  const kind = access.level === "trial" ? "trial" : "full";
+  const blocked = access.level === "blocked";
   const [profile, setProfile] = useState<LearnerProfileDraft>(initialProfile);
   const [topic, setTopic] = useState("");
   const [scenario, setScenario] = useState("");
@@ -120,11 +127,11 @@ export function HomePracticeSetup({ userName, initialProfile, initialWeakPoints 
   }
 
   async function startVoicePractice() {
-    if (isStarting) return;
+    if (isStarting || blocked) return;
     const request = validatePracticeSetupRequest({
       profile,
       setup: { topic, scenario, sessionMode, targetVocabulary, reviewVocabulary, grammarFocus, weakPoints, durationMinutes, tutorId },
-    });
+    }, { kind });
     if (!request.ok) {
       setFieldErrors(request.fieldErrors);
       setFormError("Please fix the highlighted fields before starting.");
@@ -139,6 +146,14 @@ export function HomePracticeSetup({ userName, initialProfile, initialWeakPoints 
       });
       const body: unknown = await response.json().catch(() => null);
       if (response.status === 401) { router.push("/sign-in"); return; }
+      // The trial was used meanwhile (e.g. in another tab): show the banner with the request form.
+      if (response.status === 403) {
+        const status = accessStatusOf(body);
+        setAccess((current) => ({ ...current, level: "blocked", trialUsed: true, status: status ?? current.status }));
+        setFormError(messageOf(body, "Your free trial call has been used. Full access needs the admin's approval."));
+        setIsStarting(false);
+        return;
+      }
       if (!response.ok || !isSuccessfulPracticeSetup(body)) {
         setFieldErrors(fieldErrorsOf(body));
         throw new Error(messageOf(body, "We could not create your practice session. Please try again."));
@@ -160,6 +175,8 @@ export function HomePracticeSetup({ userName, initialProfile, initialWeakPoints 
           <p className="mt-4 text-lg leading-8 text-app-muted">Ready for today&apos;s English speaking practice?</p>
         </div>
       </section>
+
+      <AccessBanner access={access} onChange={setAccess} />
 
       <section className="mb-12" aria-labelledby="practice-heading">
         <div className="mb-5">
@@ -230,9 +247,16 @@ export function HomePracticeSetup({ userName, initialProfile, initialWeakPoints 
               help="Your tutor will watch for these. They are filled in from your recent reviews; edit them freely."
               error={errorOf("setup.weakPoints")} />
 
-            <OptionPills id="setup-duration" label="Duration"
-              options={sessionDurations.map((value) => ({ value, label: `${value} min` }))} value={durationMinutes}
-              onChange={setupField("durationMinutes", setDurationMinutes)} error={errorOf("setup.durationMinutes")} />
+            {kind === "full" ? (
+              <OptionPills id="setup-duration" label="Duration"
+                options={sessionDurations.map((value) => ({ value, label: `${value} min` }))} value={durationMinutes}
+                onChange={setupField("durationMinutes", setDurationMinutes)} error={errorOf("setup.durationMinutes")} />
+            ) : (
+              <div>
+                <p className="mb-2 text-sm font-semibold text-app-text">Duration</p>
+                <p className="text-sm text-app-muted">Your trial call lasts {TRIAL_DURATION_MINUTES} minute. Full access unlocks 10, 15 or 20 minutes.</p>
+              </div>
+            )}
           </section>
 
           <aside className="space-y-6">
@@ -280,12 +304,13 @@ export function HomePracticeSetup({ userName, initialProfile, initialWeakPoints 
               <div className="mt-5 space-y-3 rounded-xl border border-app-border p-4">
                 <SummaryRow label="Language" value={practiceLanguage.name} />
                 <SummaryRow label="Level" value={profile.level ?? "Not selected"} />
-                <SummaryRow label="Duration" value={`${durationMinutes} min`} />
+                <SummaryRow label="Duration" value={kind === "trial" ? `${TRIAL_DURATION_MINUTES} min (trial)` : `${durationMinutes} min`} />
               </div>
               {formError ? <p className="mt-4 text-sm font-medium leading-5 text-app-error" role="alert">{formError}</p> : null}
-              <button type="button" onClick={startVoicePractice} disabled={isStarting} aria-busy={isStarting}
+              <button type="button" onClick={startVoicePractice} disabled={isStarting || blocked} aria-busy={isStarting}
                 className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-app-primary px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70">
-                <Mic className="h-5 w-5" /> {isStarting ? "Preparing practice..." : "Start Voice Practice"}
+                {blocked ? <><Lock className="h-5 w-5" /> Full access needed</>
+                  : <><Mic className="h-5 w-5" /> {isStarting ? "Preparing practice..." : kind === "trial" ? "Start 1-minute trial" : "Start Voice Practice"}</>}
               </button>
             </section>
           </aside>
@@ -338,6 +363,10 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 
 function isSuccessfulPracticeSetup(value: unknown): value is { success: true; sessionId: string } {
   return isRecord(value) && value.success === true && typeof value.sessionId === "string" && value.sessionId.length > 0;
+}
+
+function accessStatusOf(value: unknown): AccessStatus | undefined {
+  return isRecord(value) && isOneOf(value.accessStatus, accessStatuses) ? value.accessStatus : undefined;
 }
 
 function messageOf(value: unknown, fallback: string): string {

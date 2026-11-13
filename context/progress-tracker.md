@@ -308,6 +308,28 @@ without mocks.
     blocked, storage failure, strict trial/full parsing); route and creation
     tests in `tests/api.test.mjs`; `npm test` 78/78; strip-types 5/5;
     typegen + `tsc`; build; lint shows only the N-02c baseline.
+- **C-23** ACC-02 learner side (2026-11-13, batch 2):
+  - `access.ts`: `AccessView`, `accessViewOf`, `canRequestAccess`,
+    `requestAccess` (none / rejected → pending; message trimmed, ≤ 300,
+    non-string → invalid; pending → `already_pending`; approved or admin →
+    `already_approved`), and `formatAccessDate` (Vietnam time).
+  - `access-server.ts`: `getAccessView` (a read failure falls back to the
+    initial view) and `requestUserAccess` (one transaction, `set` with merge).
+  - `POST /api/access-request`: 200 / 400 / 409 `reason` / 500.
+  - `/` loads the profile and the access view in parallel.
+    `HomePracticeSetup` takes `initialAccess` and validates with `{kind}`.
+    A trial hides the duration and says "Start 1-minute trial". A blocked
+    account gets a disabled "Full access needed". A 403 switches the view to
+    blocked.
+  - New `AccessBanner` (UI in `ui-context.md` → Home access).
+  - The smoke script also checks that `POST /api/access-request` answers 401.
+  - Verify: `tests/access.test.mjs` +3 (request transitions, refusals and
+    message rules, view and Vietnam-time date); `tests/api.test.mjs` +1
+    (route mapping); `npm test` 82/82; typegen + `tsc`; build; lint shows
+    only the N-02c baseline.
+  - **Manual check pending (user, after deploy):** a new account sees the
+    trial banner, makes a 1-minute call that is reviewed, then sends a
+    request and sees "pending".
 
 ## In Progress
 
@@ -369,7 +391,6 @@ Rules for every unit:
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **ACC-02** | Learner side: `POST /api/access-request`; access banner on `/` (trial available, trial used, pending, rejected, approved); trial form without the duration choice; 403 handling | ACC-01 | Route tests (401/400/409/200, `none`/`rejected` → `pending`); on the deployment, a new account sees the trial, makes a 1-minute call that gets reviewed, then sends a request |
 | **ACC-03** | Admin side: `/admin` page (pending and approved lists), `POST /api/admin/access/[uid]` (approve/reject/revoke), header link with the pending count, admin-only | ACC-02 | Tests: non-admin → 404 on the page and the route; each transition and invalid one (409); a decision about `ADMIN_UID` → 409. On the deployment: approve → the learner creates a full session; revoke → 403 again |
 | **LIM-01** | Daily call limit for approved learners (`api-contracts.md` → Daily call limit). Pure rules in `lib/practice/call-quota.ts`; `users/{uid}.callQuota` checked and incremented in the ACC-01 transaction; 429 `call_limit_reached`; calls left and reset time on `/`; admin exempt; `PRACTICE_DAILY_CALL_LIMIT` (default 5) in `.env.example` and on Vercel. Share the production URL with other people only after this unit | ACC-03 | Tests: under the limit → session created and `used` + 1; at the limit → 429 with no session and no write; a new day resets; concurrent requests never pass the limit; invalid env → default. On the deployment, the limit is reached and the form shows it |
 | **DC-02** | Delete the retired self-hosted stack (confirmed 2026-11-13): `dograh/docker-compose.yml`, `dograh/.env.example`, `backup.ps1` / `restore.ps1`, the `dograh:up|down|logs|backup` scripts, the `local` transcript mode and its variables; update README, tests and context | DC-01 | `npm test`, build and lint pass; no `localhost:8020`, `fluentai-dograh` or `DOGRAH_TRANSCRIPT_MODE` left in code or docs |

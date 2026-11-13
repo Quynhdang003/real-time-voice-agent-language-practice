@@ -152,3 +152,67 @@ test("trial and full sessions parse strictly; sessions without kind stay full", 
   assert.equal(domain.parsePracticeSession("s", legacy).kind, "full");
   assert.equal(domain.parsePracticeSession("s", documentV2()).kind, "full");
 });
+
+// ACC-02: access requests.
+function requestStore(stored, adminUid) {
+  const state = { user: structuredClone(stored), writes: 0, transactions: 0 };
+  const store = {
+    adminUid, now: () => "2026-11-13T09:00:00.000Z", onError() {},
+    transaction: async (apply) => {
+      state.transactions++;
+      return apply({
+        readUser: async () => state.user,
+        writeUser: (patch) => { state.writes++; state.user = { ...state.user, ...structuredClone(patch) }; },
+      });
+    },
+  };
+  return { state, request: (userId, body) => access.requestAccess(userId, body, store) };
+}
+
+test("a request moves none or rejected to pending, with a trimmed optional message", async () => {
+  const fresh = requestStore(undefined);
+  const result = await fresh.request("user-a", { message: "  I am   a student  ", status: "approved", userId: "x" });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(fresh.state.user.access, { status: "pending", trialUsed: false,
+    requestedAt: "2026-11-13T09:00:00.000Z", requestMessage: "I am a student", decidedAt: null });
+
+  const rejected = requestStore({ access: { status: "rejected", trialUsed: true, decidedAt: "2026-11-10T00:00:00.000Z" } });
+  assert.equal((await rejected.request("user-a", {})).status, "ok");
+  assert.equal(rejected.state.user.access.status, "pending");
+  assert.equal(rejected.state.user.access.trialUsed, true, "the trial state is unchanged");
+  assert.equal(rejected.state.user.access.decidedAt, null);
+  assert.equal(rejected.state.user.access.requestMessage, null);
+});
+
+test("pending, approved and admin accounts cannot request again; bad messages are rejected", async () => {
+  for (const [status, expected] of [["pending", "already_pending"], ["approved", "already_approved"]]) {
+    const { state, request } = requestStore({ access: { status, trialUsed: true } });
+    assert.equal((await request("user-a", {})).status, expected);
+    assert.equal(state.writes, 0);
+  }
+  const admin = requestStore({}, "admin");
+  assert.equal((await admin.request("admin", {})).status, "already_approved");
+  assert.equal(admin.state.transactions, 0);
+  const invalid = requestStore(undefined);
+  for (const body of [{ message: "x".repeat(301) }, { message: 42 }]) {
+    const result = await invalid.request("user-a", body);
+    assert.equal(result.status, "invalid");
+    assert.ok(result.fieldErrors.message);
+  }
+  assert.equal(invalid.state.transactions, 0);
+  assert.equal((await invalid.request("user-a", { message: "  " + "x".repeat(300) + "  " })).status, "ok");
+  const failing = await access.requestAccess("user-a", {}, { adminUid: undefined, now: () => "", onError() {},
+    transaction: async () => { throw new Error("offline"); } });
+  assert.deepEqual(failing, { status: "unavailable" });
+});
+
+test("the view says when a learner may request access", () => {
+  const view = (status, trialUsed, userId = "u") => access.accessViewOf(userId, { ...access.initialAccess, status, trialUsed }, "admin");
+  assert.equal(access.canRequestAccess(view("none", false)), true);
+  assert.equal(access.canRequestAccess(view("rejected", true)), true);
+  assert.equal(access.canRequestAccess(view("pending", true)), false);
+  assert.equal(access.canRequestAccess(view("approved", true)), false);
+  assert.equal(access.canRequestAccess(view("none", false, "admin")), false);
+  assert.equal(view("none", true).level, "blocked");
+  assert.equal(access.formatAccessDate("2026-11-13T18:30:00.000Z"), "14 Nov 2026", "dates use Vietnam time");
+});

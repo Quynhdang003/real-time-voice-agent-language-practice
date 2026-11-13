@@ -169,7 +169,7 @@ Moved to "Web API" above. Still pending:
 
 ### Access and trial in `POST /api/practice-setup` — implemented (ACC-01)
 
-Implemented in `lib/practice/create-session.ts` (`createPracticeSessionForUser`, pure), with its adapter `createPracticeSession` in `lib/practice/server.ts`. The route maps `ok` → 201, `invalid` → 400, `access_required` → 403 and `unavailable` → 500. The client side (the banner and the trial form) is still ACC-02.
+Implemented in `lib/practice/create-session.ts` (`createPracticeSessionForUser`, pure), with its adapter `createPracticeSession` in `lib/practice/server.ts`. The route maps `ok` → 201, `invalid` → 400, `access_required` → 403 and `unavailable` → 500. The client side (the banner and the trial form) was added in ACC-02.
 
 Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it needs the single admin's approval.
 
@@ -184,16 +184,23 @@ Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it
   | anything else, `trialUsed` true | **403** `{success: false, message, reason: "access_required", accessStatus}`; no write |
 
 - The session document adds `kind` (see the storage model). `kind` in the body is ignored, like `userId`.
-- The client reads `{kind, accessStatus, trialUsed}` from the server (passed to `/` with the profile). It hides the duration choice for a trial, and shows the access banner (`project-overview.md` → Access, trial and admin). 403 shows the same banner, for a state that changed in another tab.
+- **[done ACC-02]** `/` gets an `AccessView` `{level, status, trialUsed, requestedAt, decidedAt}` from `getAccessView` (`lib/practice/access-server.ts`), next to the profile. A read failure falls back to the initial view, and the server decides again on submit.
+  - The form validates with `{kind}`. A trial hides the duration pills, and its summary and button say "1 min (trial)" and "Start 1-minute trial".
+  - A blocked account sees "Full access needed" on a disabled button.
+  - `AccessBanner` (`components/fluent/access-banner.tsx`) shows the state and the request form.
+  - A 403 switches the view to blocked, with the returned `accessStatus`, for a state that changed in another tab.
 
 ### Access requests and admin decisions (ACC-02, ACC-03)
 
 | Route | Auth | Success | Errors |
 |---|---|---|---|
-| `POST /api/access-request` `{message?}` (ACC-02) | S | 200 `{success: true, access: {status: "pending", requestedAt}}` | 401; 400 invalid JSON or `message` > 300 chars after trimming; 409 `{reason: "already_pending" \| "already_approved"}` (the admin also gets `already_approved`); 500 |
+| `POST /api/access-request` `{message?}` (**done ACC-02**: `requestAccess` in `access.ts`, adapter `requestUserAccess` in `access-server.ts`) | S | 200 `{success: true, access: {status: "pending", requestedAt}}` | 401; 400 invalid JSON or `message` > 300 chars after trimming; 409 `{reason: "already_pending" \| "already_approved"}` (the admin also gets `already_approved`); 500 |
 | `POST /api/admin/access/[uid]` `{decision}` (ACC-03) | S + admin | 200 `{success: true, access: {status, decidedAt}}`; an identical repeat is a no-op 200 | 404 for any non-admin caller (the route looks absent); 400 invalid JSON, invalid `uid` or `decision`; 404 `not_found` (no such user document); 409 `{reason: "invalid_transition"}`; 500 |
 
-- **Request:** allowed from `none` or `rejected`. It sets `status: "pending"`, `requestedAt`, `requestMessage` (trimmed, `null` if empty) and clears `decidedAt`. The trial state is unchanged.
+- **Request:** allowed from `none` or `rejected`. It sets `status: "pending"`, `requestedAt`, `requestMessage` (trimmed, whitespace collapsed, `null` if empty) and clears `decidedAt`. The trial state is unchanged.
+  - A non-string `message` → 400.
+  - The admin gets `already_approved` without a database read.
+  - The message is checked before the transaction, so an invalid one never reaches Firestore.
 - **Decisions** (each in a transaction):
   - `approve`: `pending` → `approved`
   - `reject`: `pending` → `rejected`

@@ -132,3 +132,27 @@ test("webhook API rejects missing/wrong secret and malformed JSON before ingesti
   delete process.env.DOGRAH_WEBHOOK_SECRET;
   assert.equal((await send("test-only-secret", "{}")).status, 401);
 });
+
+test("access request API authenticates, validates JSON and maps request outcomes", async () => {
+  let user = null, result = { status: "ok", access: { status: "pending", requestedAt: "2026-11-13T09:00:00.000Z" } };
+  const { POST } = loadTs("app/api/access-request/route.ts", {
+    "@/lib/actions/auth.action": { getCurrentUser: async () => user },
+    "@/lib/practice/access-server": { requestUserAccess: async (uid) => { assert.equal(uid, "user-a"); return result; } },
+  });
+  assert.equal((await POST(request())).status, 401);
+  user = { id: "user-a" };
+  assert.equal((await POST(new Request("https://app.example.test", { method: "POST", body: "{" }))).status, 400);
+  const ok = await POST(request({ message: "hi" }));
+  assert.equal(ok.status, 200);
+  assert.deepEqual((await ok.json()).access, { status: "pending", requestedAt: "2026-11-13T09:00:00.000Z" });
+  result = { status: "invalid", fieldErrors: { message: "Too long" } };
+  assert.equal((await POST(request())).status, 400);
+  for (const status of ["already_pending", "already_approved"]) {
+    result = { status };
+    const response = await POST(request());
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).reason, status);
+  }
+  result = { status: "unavailable" };
+  assert.equal((await POST(request())).status, 500);
+});

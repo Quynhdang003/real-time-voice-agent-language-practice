@@ -15,7 +15,7 @@ for (const path of ["/", "/voice-call?sessionId=session-a", "/review?sessionId=s
 }
 for (const [method, path] of [["POST", "/api/practice-setup"], ["POST", "/api/practice-session/session-a/call-event"],
   ["POST", "/api/practice-session/session-a/generate-review"], ["POST", "/api/dograh/transcript-webhook"],
-  ["PUT", "/api/learner-profile"]]) {
+  ["PUT", "/api/learner-profile"], ["POST", "/api/access-request"]]) {
   const response = await fetch(new URL(path, base), { method, body: "{}", signal: AbortSignal.timeout(15_000) });
   assert.equal(response.status, 401, path);
   assert.equal((await response.json()).success, false);
