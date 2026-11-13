@@ -144,8 +144,9 @@ part of the target since 2026-11-13.
 
 - **Production:** a new Vercel project on the Hobby plan. It builds the `main`
   branch (Node.js 24.x) and serves it on the project's default HTTPS domain
-  (`<project>.vercel.app`, written `<production-domain>` in these files). The
-  old `production` branch is deleted.
+  `https://real-time-voice-agent-language-prac-one.vercel.app`, written
+  `<production-domain>` in these files. The old `production` branch is
+  deleted. **[done DEP-01, 2026-11-13]**
 - **Dograh Cloud:** two workflows (American, British) with one embed token
   each. The allowed domains are the production domain and `localhost:3000`.
   The Webhook node posts to the production domain only.

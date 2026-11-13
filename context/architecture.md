@@ -15,7 +15,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 | File store | Firebase Storage (client SDK)                                 | Optional profile photos                                           |
 | Voice      | **[planned DC-01]** Dograh Cloud, `https://app.dograh.com` (hosted; the version is set by Dograh). Embed widget: voice, headless. The self-hosted Dograh 1.50.0 stack (DG-01) is **[retired]** | Real-time English tutor; end-of-call Webhook node                 |
 | AI review  | Google Gemini via `@google/genai`, model `gemini-3.5-flash-lite` (available, checked 2026-11-09) | Structured JSON review of the transcript                          |
-| Hosting    | **[planned DEP-01]** Vercel, Hobby plan: a new project (Git integration, Production Branch `main`, default `<project>.vercel.app` domain) | Serves pages and route handlers as Node.js Functions; `after()` runs through Vercel's `waitUntil` |
+| Hosting    | **[done DEP-01]** Vercel, Hobby plan: a new project (Git integration, Production Branch `main`, `real-time-voice-agent-language-prac-one.vercel.app`) | Serves pages and route handlers as Node.js Functions; `after()` runs through Vercel's `waitUntil` |
 | Runtime    | Node.js 24.x on Vercel; `next dev` on `localhost:3000` for development | `patch-package` (`jwks-rsa`) kept for Firebase Admin on Vercel    |
 | Tests      | `node:test` + `tests/helpers/load-ts.mjs`                     | Logic tests with mocked providers                                 |
 
@@ -111,7 +111,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 - The ai-companion project's Dograh (API `:8010`, UI `:3010`, MinIO `:9000`) is
   not used by FluentAI.
 
-## Deployment (Vercel) **[planned DEP-01]**
+## Deployment (Vercel) **[done DEP-01, 2026-11-13]**
 
 - **Project:** a new Vercel project on the **Hobby** plan, created in DEP-01
   and linked to the GitHub repo. The Production Branch is `main`, so every
@@ -121,8 +121,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 - **Build:** `npm ci` (its `postinstall` applies `patches/jwks-rsa+4.1.0.patch`),
   then `next build`, on Node.js 24.x from `package.json` `engines`.
 - **Domain:** the new project's default production domain,
-  `<project>.vercel.app`. These files write it as `<production-domain>` until
-  DEP-01 records the real name. No custom domain. The Dograh embed tokens, the
+  **`real-time-voice-agent-language-prac-one.vercel.app`** (recorded in
+  DEP-01, 2026-11-13). The context files write it as `<production-domain>`.
+  No custom domain. The Dograh embed tokens, the
   Webhook node and the Firebase authorized domains all use it, so renaming the
   project later means re-configuring them.
 - **Deployment Protection:** Preview deployments stay protected (the Vercel

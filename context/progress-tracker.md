@@ -21,13 +21,15 @@ change.
   DG-01 (the Docker stack) is retired. DG-02…DG-04 stay valid with Dograh
   Cloud values. DG-05 changes how DG-04 passes the URLs.
 - Pending manual steps by the user:
-  - the SET-04 UI check
-  - the new Vercel project (DEP-01)
+  - the SET-04 UI check (can now be done on the deployment)
+  - the DEP-01 checks on the deployment (I-03)
   - the Dograh Cloud setup: providers, the 2 workflows, the credential, the
     embed tokens, `.env.local` and the Vercel variables (I-02)
   - the real call check per accent (DC-01)
-- Next units: DEP-01 → DG-05 → DC-01 → ACC-01 → ACC-02 → ACC-03 → LIM-01 →
-  TR-01.
+- DEP-01 done on 2026-11-13 (C-20). Production:
+  `https://real-time-voice-agent-language-prac-one.vercel.app`. The user's
+  manual checks are I-03.
+- Next units: DG-05 → DC-01 → ACC-01 → ACC-02 → ACC-03 → LIM-01 → TR-01.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
   instances that are gone now.
@@ -220,6 +222,35 @@ without mocks.
   - Server-only embed script URLs (DG-05).
 
   Verify: read `context/*.md`. No code, spec, README or branch changed.
+- **C-20** DEP-01 Vercel deployment (2026-11-13):
+  - Production: `https://real-time-voice-agent-language-prac-one.vercel.app`.
+    New Vercel project (Hobby), Production Branch `main`, deploying merge
+    commit `5a4428e` (PR #1, `feat/v2-setup-vercel-deploy`). The repository is
+    now `Quynhdang003/real-time-voice-agent-language-practice`; the old URL
+    redirects.
+  - Before the deploy: the v2 work (EN-01, SET-01…05, DG-01…04, `context/`,
+    `CLAUDE.md`) had never been committed, and `origin/main` was still
+    `1102a28` (v1). It was committed in 4 commits on the branch and merged by
+    the user. `docs/CHUONG_3.md` stays uncommitted.
+  - Repo changes: README "Deploy on Vercel" rewritten as a step list;
+    `.env.example` transcript comments updated for Vercel.
+  - Two failed builds, both from configuration:
+    1. the Install Command had been typed with backticks (`` `npm ci` ``),
+       so the shell ran npm's output as a command (exit 127);
+    2. the `FIREBASE_*` variables were missing in Production, so
+       `firebase/admin.ts` threw while `next build` collected page data.
+
+    The third build passed: `npm ci`, `jwks-rsa@4.1.0 ✔`, `next build`.
+  - Verify:
+    - before the deploy: `npm test` 63/63, typegen + `tsc`, `npm run
+      build`, lint with only the N-02c baseline, and `npm run test:smoke`
+      10/10 against `next start -p 3100`;
+    - on the deployment: `TEST_BASE_URL=https://real-time-voice-agent-language-prac-one.vercel.app
+      npm run test:smoke` 10/10. The webhook answers 401, not 404, so this
+      is `main`. Firebase Admin starts on Vercel.
+  - The `production` branch (`b4c06f5`) is deleted locally and on `origin`;
+    `git ls-remote origin production` is empty (fixes N-07).
+  - Remaining manual checks by the user: I-03.
 
 ## In Progress
 
@@ -246,29 +277,14 @@ without mocks.
      then restart Next.js and redeploy.
   6. Make a real call per accent on the deployment and on `localhost:3000`,
      then `dograh:export` ×2.
-- **I-03** DEP-01, started 2026-11-13.
-  - Done in the repo:
-    - pre-deploy checks: `npm test` 63/63; typegen + `tsc` pass; lint shows
-      only the N-02c baseline; `npm run build` passes; `npm run test:smoke`
-      10/10 against `next start -p 3100` (Node 22.15.0 locally)
-    - README "Deploy on Vercel" rewritten as the step list (project, Node
-      24.x, `npm ci`, Production Branch, protection, variables, Firebase
-      authorized domain, verification)
-    - `.env.example` transcript comments updated for Vercel
-  - The v2 work (EN-01, SET-01…05, DG-01…04, `context/`, `CLAUDE.md`) and
-    the README were uncommitted, with `origin/main` still at `1102a28` (v1).
-    By the user's choice, they are now committed on branch
-    `feat/v2-setup-vercel-deploy` and pushed. `docs/CHUONG_3.md` stays
-    uncommitted.
-  - GitHub renamed the repository to
-    `Quynhdang003/real-time-voice-agent-language-practice`. The old URL still
-    redirects.
-  - Remaining:
-    - the user opens the PR and merges it into `main`
-    - the user creates the Vercel project, sets the variables and adds the
-      Firebase authorized domain (README "Deploy on Vercel")
-    - smoke test and log check on the deployment; record the domain here
-    - delete the `production` branch locally and on `origin`
+- **I-03** DEP-01 manual checks by the user, on
+  `https://real-time-voice-agent-language-prac-one.vercel.app`:
+  - sign in, then create a v2 practice session (`/voice-call` reporting that
+    voice calling is not configured is expected until DG-05/DC-01);
+  - the Vercel Logs for `/` and `/sign-in` show no `ERR_REQUIRE_ESM`;
+  - a Preview deployment URL asks for a Vercel login;
+  - Settings → General shows Node.js 24.x (the build log does not print it);
+  - the domain is in Firebase Auth → Authorized domains.
 
 ## Next Up
 
@@ -281,7 +297,6 @@ Rules for every unit:
 
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
-| **DEP-01** | Vercel deployment of `main`. Steps: (1) create a **new** Vercel project (Hobby), Production Branch `main`, Node.js 24.x, default `<project>.vercel.app` domain, and record the real domain in the context files; (2) set the variables (Firebase, Gemini, `DOGRAH_WEBHOOK_SECRET`, `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`; widget URLs once DC-01 has them); (3) add the domain to Firebase Auth authorized domains; (4) update README "Deploy on Vercel"; (5) once production serves `main`, delete the `production` branch locally and on `origin`. No app behavior change expected (fixes N-04 Node 24, N-07) | CTX-02 ✓ | On the deployment: `TEST_BASE_URL=https://<production-domain> npm run test:smoke` passes; no `ERR_REQUIRE_ESM` in the Function logs; sign-in and setup v2 work; a Preview URL is protected; `git ls-remote origin production` is empty |
 | **DG-05** | Server-only embed script URLs (decided 2026-11-13). Rename `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH` to `DOGRAH_WIDGET_SRC_AMERICAN` / `_BRITISH`. The `/voice-call` server component picks the URL by the session's accent (v1 → American) and passes it to `VoiceCallExperience` only for the owner's session in `ready` status, the only status that can start a call. `use-dograh-widget.ts` takes it as a prop and keeps the URL checks and the error that names the missing variable. Update `.env.example` and the README. Done before DC-01, so the user sets each variable once, under its final name | DEP-01 | Tests: URL chosen by accent; no URL for a session that is not `ready`, or for another user's session; a missing variable gives the named error. After `npm run build`, no `dograh-widget.js` or `token=` string in `.next/static`. The real call is checked in DC-01 |
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint and embed steps; `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
 | **ACC-01** | Access model and trial, server side (`api-contracts.md` → Access and trial). Spec first: `workflow-spec.md` tells the tutor how to run a 1-minute session (greeting and 2–3 short exchanges). Then: `lib/practice/access.ts` (pure rules, `isAdmin`), `access-server.ts`; `users/{uid}.access`; session `kind` and the 1-minute trial in the `practice-setup` transaction; 403 `access_required`; v2 parser reads `kind` (missing → `full`) and `durationMinutes: 1` only for trial; `ADMIN_UID` in `.env.example` and on Vercel | DC-01 | Tests: first setup → trial session, `trialUsed` set; second → 403 with no write; approved → full; admin → full; concurrent trial setups create one session; `kind` in the body ignored; old v2 sessions still parse |
@@ -354,8 +369,13 @@ stated otherwise
     (practice is now English only; the comment language is still open).
   - c. The transcript is cut at 12,000 chars, possibly mid-turn.
   - d. Prompt injection is untested.
-- **N-04** Staging cases E01–E13 not run; Node 24 not verified (local 22.15.0;
-  DEP-01 verifies it on Vercel); browser smoke not run.
+- **N-04** Staging cases E01–E13 not run; browser smoke not run. Node 24:
+  Vercel builds from `engines` `24.x`, and the smoke test passes there (C-20),
+  but the build log does not print the version (check in I-03). Locally the
+  checks run on 22.15.0.
+- **N-09** `npm audit` on the Vercel build reports 43 vulnerabilities (2 low,
+  23 moderate, 16 high, 2 critical). They are not triaged yet, and no unit
+  covers them.
 - **N-05** Placeholder data on `/`: "Recent practice", per-language progress,
   a `SessionCard` link without `sessionId`, "View all", "Good evening",
   unused `PerformanceCard`.
@@ -363,7 +383,8 @@ stated otherwise
   `.language-check.mjs:14` (removed by EN-01).
 - **N-07** The `production` branch (`b4c06f5`) removes the transcript webhook
   and review code. A deployment of it answers webhooks with 404 (runs 40–44).
-  DEP-01 deploys `main` from a new Vercel project and deletes the branch.
+  **Fixed 2026-11-13 (DEP-01):** `main` is deployed from a new Vercel
+  project, and the branch is deleted.
 - **N-08** Self-hosted Dograh values in the repo:
   - `dograh/scripts/lib.mjs` defaults to `http://localhost:8020`.
   - `dograh/workflow-spec.md` uses `http://host.docker.internal:3000` for the
