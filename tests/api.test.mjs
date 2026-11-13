@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./helpers/load-ts.mjs";
-import { setup, review } from "./helpers/fixtures.mjs";
+import { setup, review, profileV2, setupV2 } from "./helpers/fixtures.mjs";
 const context = { params: Promise.resolve({ sessionId: "session-a" }) };
 const request = (body = {}) => new Request("https://app.example.test/api", { method: "POST", body: JSON.stringify(body) });
 
@@ -16,9 +16,42 @@ test("setup API authenticates, validates JSON and derives ownership from auth", 
   user = { id: "user-a" };
   assert.equal((await POST(new Request("https://app.example.test", { method: "POST", body: "{" }))).status, 400);
   assert.equal((await POST(request({}))).status, 400);
-  assert.equal((await POST(request({ ...setup, userId: "user-b", status: "completed" }))).status, 201);
+  // The v1 catalog body is no longer accepted (SET-04).
+  assert.equal((await POST(request(setup))).status, 400);
+  assert.equal(saved, undefined);
+  const invalid = await POST(request({ profile: { ...profileV2, level: "Beginner" }, setup: setupV2 }));
+  assert.equal(invalid.status, 400);
+  assert.ok((await invalid.json()).fieldErrors["profile.level"]);
+  assert.equal(saved, undefined);
+  assert.equal((await POST(request({ profile: profileV2, setup: { ...setupV2, languageId: "japanese" },
+    userId: "user-b", status: "completed" }))).status, 201);
+  assert.equal(saved.schemaVersion, 2);
   assert.equal(saved.userId, "user-a");
   assert.equal(saved.status, "ready");
+  assert.equal(saved.language.id, "english");
+  assert.equal(saved.level, "B1");
+  assert.equal(saved.setup.grammarFocus, null);
+});
+
+test("learner profile API authenticates, validates JSON and maps save outcomes", async () => {
+  let user = null, result = { status: "ok", profile: { learnerName: "A" } };
+  const { PUT } = loadTs("app/api/learner-profile/route.ts", {
+    "@/lib/actions/auth.action": { getCurrentUser: async () => user },
+    "@/lib/practice/profile-server": { updateLearnerProfile: async (uid) => { assert.equal(uid, "user-a"); return result; } },
+  });
+  const put = (body) => PUT(new Request("https://app.example.test/api/learner-profile", { method: "PUT", body }));
+  assert.equal((await put("{}")).status, 401);
+  user = { id: "user-a" };
+  assert.equal((await put("{")).status, 400);
+  const ok = await put("{}");
+  assert.equal(ok.status, 200);
+  assert.deepEqual((await ok.json()).profile, { learnerName: "A" });
+  result = { status: "invalid", fieldErrors: { "profile.level": "Choose" } };
+  const invalid = await put("{}");
+  assert.equal(invalid.status, 400);
+  assert.deepEqual((await invalid.json()).fieldErrors, { "profile.level": "Choose" });
+  result = { status: "unavailable" };
+  assert.equal((await put("{}")).status, 500);
 });
 
 test("call API maps domain outcomes and passes only authenticated identity", async () => {

@@ -1,34 +1,19 @@
 // Shared domain configuration. Keep React, icons and Firebase SDKs out of this module.
-export const practiceLanguages = {
-  english: { id: "english", name: "English" },
-  japanese: { id: "japanese", name: "Japanese" },
-  korean: { id: "korean", name: "Korean" },
-  chinese: { id: "chinese", name: "Chinese" },
-  french: { id: "french", name: "French" },
-  spanish: { id: "spanish", name: "Spanish" },
-} as const;
+import { isBoundedText, isKeyOf, isOneOf, isRecord } from "./guards.ts";
+import { practiceDurations, practiceLanguages, practiceLevels, practiceTopics, practiceTutors } from "./catalog.ts";
+import type {
+  LanguageId, PracticeDuration, PracticeLanguage, PracticeLevel, PracticeTopic, PracticeTutor, TopicId, TutorId,
+} from "./catalog.ts";
 
-export const practiceTopics = {
-  daily: { id: "daily", name: "Daily Conversation" },
-  travel: { id: "travel", name: "Travel" },
-  restaurant: { id: "restaurant", name: "Restaurant" },
-  interview: { id: "interview", name: "Job Interview" },
-  shopping: { id: "shopping", name: "Shopping" },
-  "free-talk": { id: "free-talk", name: "Free Talk" },
-} as const;
+export { practiceDurations, practiceLanguages, practiceLevels, practiceTopics, practiceTutors } from "./catalog.ts";
+export type {
+  LanguageId, PracticeDuration, PracticeLanguage, PracticeLevel, PracticeTopic, PracticeTutor, TopicId, TutorId,
+} from "./catalog.ts";
+import { validateLearnerProfile } from "./profile.ts";
+import type { CefrLevel, LearnerProfile, SessionProfile } from "./profile.ts";
+import { validateSessionSetup } from "./session-setup.ts";
+import type { SessionDuration, SessionSetup, StoredSessionSetup } from "./session-setup.ts";
 
-export const practiceTutors = {
-  emma: {
-    id: "emma",
-    name: "Emma",
-    role: "Language Tutor",
-    description: "Friendly tutor focused on everyday conversations.",
-    specialties: ["Everyday conversation", "Vocabulary"],
-  },
-} as const;
-
-export const practiceLevels = ["Beginner", "A1", "A2", "B1", "B2"] as const;
-export const practiceDurations = [5, 10, 15] as const;
 export const callStatuses = ["ready", "connecting", "active", "completed", "failed"] as const;
 export const callEndReasons = ["user_ended", "mic_denied", "network_error", "dropped"] as const;
 export type DograhCall = {
@@ -44,15 +29,6 @@ export type DograhCall = {
   transcript?: TranscriptTurn[];
   transcriptStatus?: TranscriptStatus;
 };
-
-export type LanguageId = keyof typeof practiceLanguages;
-export type TopicId = keyof typeof practiceTopics;
-export type TutorId = keyof typeof practiceTutors;
-export type PracticeLevel = (typeof practiceLevels)[number];
-export type PracticeDuration = (typeof practiceDurations)[number];
-export type PracticeLanguage = { id: LanguageId; name: string };
-export type PracticeTopic = { id: TopicId; name: string };
-export type PracticeTutor = { id: TutorId; name: string; role: string };
 
 export type PracticeSetupInput = {
   languageId: LanguageId;
@@ -78,31 +54,27 @@ export type SessionReview = {
   tutorFeedback: string;
 };
 
+export type CustomTopic = { id: "custom"; name: string };
+
 // Serializable, allowlisted page data, not a raw Firestore document.
+// v1 sessions use the catalog topic and legacy level/duration; v2 adds the profile snapshot and setup.
 export type PracticeSession = {
   id: string;
+  schemaVersion: 1 | 2;
   language: PracticeLanguage;
-  topic: PracticeTopic;
-  level: PracticeLevel;
-  durationMinutes: PracticeDuration;
+  topic: PracticeTopic | CustomTopic;
+  level: PracticeLevel | CefrLevel;
+  durationMinutes: PracticeDuration | SessionDuration;
   tutor: PracticeTutor;
   status: (typeof callStatuses)[number];
+  profile?: SessionProfile;
+  setup?: StoredSessionSetup;
   dograh?: DograhCall;
   review?: SessionReview;
   reviewStatus?: ReviewStatus;
 };
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isKeyOf<T extends object>(value: unknown, target: T): value is keyof T {
-  return typeof value === "string" && Object.prototype.hasOwnProperty.call(target, value);
-}
-
-function isOneOf<const T extends readonly unknown[]>(value: unknown, options: T): value is T[number] {
-  return options.some((option) => option === value);
-}
+export { isRecord } from "./guards.ts";
 
 export function isLabel(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 200;
@@ -121,10 +93,6 @@ function isIsoTimestamp(value: unknown): value is string {
   const time = Date.parse(value);
   return Number.isFinite(time) && new Date(time).toISOString() === value.replace(/Z$/, value.includes(".") ? "Z" : ".000Z");
 }
-function isBoundedText(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= max;
-}
-
 export function isTranscriptTurn(value: unknown): value is TranscriptTurn {
   return isRecord(value) && (value.role === "tutor" || value.role === "learner") &&
     isBoundedText(value.text, 4000) && typeof value.at === "string" && value.at.length <= 64;
@@ -225,7 +193,11 @@ export function parsePracticeSetup(value: unknown): PracticeSetupInput | null {
   return { languageId, topicId, level, durationMinutes, tutorId };
 }
 
-export function createPracticeSessionDetails(setup: PracticeSetupInput): Omit<PracticeSession, "id"> {
+// New sessions are English only; every practiceLanguages entry stays readable for legacy sessions.
+export const creatablePracticeLanguageIds = ["english"] as const satisfies readonly LanguageId[];
+
+// v1 document (no schemaVersion). No route creates these any more; tests use it to build legacy fixtures.
+export function createPracticeSessionDetails(setup: PracticeSetupInput): Omit<PracticeSession, "id" | "schemaVersion"> {
   const { id, name, role } = practiceTutors[setup.tutorId];
   return {
     language: { ...practiceLanguages[setup.languageId] },
@@ -237,6 +209,83 @@ export function createPracticeSessionDetails(setup: PracticeSetupInput): Omit<Pr
   };
 }
 
+// v2 document fields (without userId and timestamps). Practice is always English.
+export function createPracticeSessionDocumentV2(profile: LearnerProfile, setup: SessionSetup) {
+  const { id, name, role } = practiceTutors[setup.tutorId];
+  const session: Omit<PracticeSession, "id"> & { schemaVersion: 2; profile: SessionProfile; setup: StoredSessionSetup } = {
+    schemaVersion: 2,
+    language: { ...practiceLanguages[creatablePracticeLanguageIds[0]] },
+    topic: { id: "custom", name: setup.topic },
+    level: profile.level,
+    durationMinutes: setup.durationMinutes,
+    tutor: { id, name, role },
+    status: "ready",
+    profile: {
+      learnerName: profile.learnerName, nativeLanguage: profile.nativeLanguage, accent: profile.accent,
+      speechPace: profile.speechPace, correctionStyle: profile.correctionStyle, vietnameseAllowed: profile.vietnameseAllowed,
+    },
+    setup: {
+      scenario: setup.scenario, sessionMode: setup.sessionMode, targetVocabulary: setup.targetVocabulary,
+      reviewVocabulary: setup.reviewVocabulary, grammarFocus: setup.grammarFocus, weakPoints: setup.weakPoints,
+    },
+  };
+  return session;
+}
+
+type SessionDetails = Pick<PracticeSession,
+  "schemaVersion" | "language" | "topic" | "level" | "durationMinutes" | "tutor" | "profile" | "setup">;
+
+// v1: catalog topic, legacy levels and durations. Stored names/roles are preserved for old sessions.
+function parseSessionDetailsV1(value: Record<string, unknown>): SessionDetails | null {
+  const { language, topic, tutor } = value;
+  if (!isRecord(language) || !isRecord(topic) || !isRecord(tutor) || !isLabel(language.name) ||
+    !isLabel(topic.name) || !isLabel(tutor.name) || !isLabel(tutor.role)) return null;
+  const setup = parsePracticeSetup({
+    languageId: language.id, topicId: topic.id, tutorId: tutor.id,
+    level: value.level, durationMinutes: value.durationMinutes,
+  });
+  if (!setup) return null;
+  return {
+    schemaVersion: 1,
+    language: { id: setup.languageId, name: language.name },
+    topic: { id: setup.topicId, name: topic.name },
+    tutor: { id: setup.tutorId, name: tutor.name, role: tutor.role },
+    level: setup.level,
+    durationMinutes: setup.durationMinutes,
+  };
+}
+
+// v2: free-text topic, CEFR level, profile snapshot and setup, re-validated with the creation rules.
+function parseSessionDetailsV2(value: Record<string, unknown>): SessionDetails | null {
+  const { language, topic, tutor, profile, setup } = value;
+  if (!isRecord(language) || !isKeyOf(language.id, practiceLanguages) || !isLabel(language.name) ||
+    !isRecord(topic) || topic.id !== "custom" || !isRecord(tutor) || !isLabel(tutor.name) ||
+    !isLabel(tutor.role) || !isRecord(profile) || !isRecord(setup)) return null;
+  const parsedProfile = validateLearnerProfile({ ...profile, level: value.level });
+  const parsedSetup = validateSessionSetup({
+    ...setup, topic: topic.name, durationMinutes: value.durationMinutes, tutorId: tutor.id,
+  });
+  if (!parsedProfile.ok || !parsedSetup.ok) return null;
+  const p = parsedProfile.value;
+  const s = parsedSetup.value;
+  return {
+    schemaVersion: 2,
+    language: { id: language.id, name: language.name },
+    topic: { id: "custom", name: s.topic },
+    tutor: { id: s.tutorId, name: tutor.name, role: tutor.role },
+    level: p.level,
+    durationMinutes: s.durationMinutes,
+    profile: {
+      learnerName: p.learnerName, nativeLanguage: p.nativeLanguage, accent: p.accent,
+      speechPace: p.speechPace, correctionStyle: p.correctionStyle, vietnameseAllowed: p.vietnameseAllowed,
+    },
+    setup: {
+      scenario: s.scenario, sessionMode: s.sessionMode, targetVocabulary: s.targetVocabulary,
+      reviewVocabulary: s.reviewVocabulary, grammarFocus: s.grammarFocus, weakPoints: s.weakPoints,
+    },
+  };
+}
+
 // Supports existing Firestore auto IDs and URL-safe legacy IDs, never document paths.
 export function isPracticeSessionId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -244,18 +293,12 @@ export function isPracticeSessionId(value: unknown): value is string {
 
 export function parsePracticeSession(id: string, value: unknown): PracticeSession | null {
   if (!isPracticeSessionId(id) || !isRecord(value)) return null;
-  const { language, topic, tutor, status, userId } = value;
-  if (
-    !isRecord(language) || !isRecord(topic) || !isRecord(tutor) ||
-    !isLabel(language.name) || !isLabel(topic.name) ||
-    !isLabel(tutor.name) || !isLabel(tutor.role) ||
-    typeof userId !== "string" || !userId.trim() || !isOneOf(status, callStatuses)
-  ) return null;
-  const setup = parsePracticeSetup({
-    languageId: language.id, topicId: topic.id, tutorId: tutor.id,
-    level: value.level, durationMinutes: value.durationMinutes,
-  });
-  if (!setup) return null;
+  const { status, userId } = value;
+  if (typeof userId !== "string" || !userId.trim() || !isOneOf(status, callStatuses)) return null;
+  // Documents without schemaVersion are v1. Unknown versions are rejected rather than guessed.
+  if ("schemaVersion" in value && value.schemaVersion !== 2) return null;
+  const details = value.schemaVersion === 2 ? parseSessionDetailsV2(value) : parseSessionDetailsV1(value);
+  if (!details) return null;
 
   const dograh = "dograh" in value ? parseDograhCall(value.dograh) : undefined;
   if (dograh === null) return null;
@@ -270,14 +313,10 @@ export function parsePracticeSession(id: string, value: unknown): PracticeSessio
     if (!isOneOf(value.reviewStatus, reviewStatuses)) return null;
     reviewStatus = value.reviewStatus;
   }
-  // Preserve stored names/roles for old sessions; omit ownership, timestamps and extra fields.
+  // Omit ownership, timestamps and extra fields.
   return {
     id,
-    language: { id: setup.languageId, name: language.name },
-    topic: { id: setup.topicId, name: topic.name },
-    tutor: { id: setup.tutorId, name: tutor.name, role: tutor.role },
-    level: setup.level,
-    durationMinutes: setup.durationMinutes,
+    ...details,
     status,
     ...(dograh ? { dograh } : {}),
     ...(review ? { review } : {}),

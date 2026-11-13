@@ -10,7 +10,7 @@ import { practiceSessionHref, type PracticeSession } from "@/lib/practice/sessio
 import type { SessionLearner } from "@/lib/practice/read-session";
 
 export function VoiceCallExperience({ session, learner }: { session: PracticeSession; learner: SessionLearner }) {
-  const call = useDograhWidget(session);
+  const call = useDograhWidget(session, learner.name);
   const busy = ["connecting", "active", "ending"].includes(call.status);
   const active = call.status === "active";
   const remaining = Math.max(0, session.durationMinutes * 60 - call.elapsed);

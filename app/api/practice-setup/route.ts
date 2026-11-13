@@ -2,7 +2,8 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { adminDb } from "@/firebase/admin";
 import { getCurrentUser } from "@/lib/actions/auth.action";
-import { createPracticeSessionDetails, parsePracticeSetup } from "@/lib/practice/session";
+import { createPracticeSessionDocumentV2 } from "@/lib/practice/session";
+import { validatePracticeSetupRequest } from "@/lib/practice/session-setup";
 
 export const runtime = "nodejs";
 
@@ -25,10 +26,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const setup = parsePracticeSetup(body);
-  if (!setup) {
+  // Body: {profile, setup}. New sessions are always English v2 documents.
+  const setupRequest = validatePracticeSetupRequest(body);
+  if (!setupRequest.ok) {
     return NextResponse.json(
-      { success: false, message: "Please select a valid language, topic, level, duration, and tutor." },
+      { success: false, message: "Please fix the highlighted fields.", fieldErrors: setupRequest.fieldErrors },
       { status: 400 },
     );
   }
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
   try {
     const sessionDocument = adminDb.collection("practiceSessions").doc();
     await sessionDocument.set({
-      ...createPracticeSessionDetails(setup),
+      ...createPracticeSessionDocumentV2(setupRequest.value.profile, setupRequest.value.setup),
       userId: user.id,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
