@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { loadTs } from "./helpers/load-ts.mjs";
 import { completed, documentV2 } from "./helpers/fixtures.mjs";
 
-const { applyDograhWebhook, parseDograhWebhookEvent } = loadTs("lib/dograh/transcript-webhook.ts");
+const { applyDograhWebhook, parseDeliveryAttempt, parseDograhWebhookEvent } = loadTs("lib/dograh/transcript-webhook.ts");
 const { parseDograhTranscriptText } = loadTs("lib/dograh/transcript-parser.ts");
 const { parsePracticeSession } = loadTs("lib/practice/session.ts");
 const url = "https://storage.example.test/31.txt?signature=secret";
@@ -16,24 +16,34 @@ const payload = (extra = {}) => ({
 const callEnded = (dograh = { workflowRunId: 31, startedAt: "2026-11-14T10:00:00.000Z" }) =>
   documentV2({ status: "completed", dograh });
 
-// In-memory Firestore: each transaction reads the current document; writes merge into dograh.
+const failed = (reason, rejectedHost) => async () => ({ status: "error", reason, ...(rejectedHost ? { rejectedHost } : {}) });
+
+// In-memory Firestore: each transaction reads the current document; writes merge into dograh, and a
+// null value removes the field (FieldValue.delete() in the adapter). A string download is a success.
 function harness(docs, download = async () => raw) {
-  const writes = [], skips = [], errors = [];
+  const writes = [], skips = [], errors = [], failures = [];
   let downloads = 0;
   const store = {
     transaction: async (id, apply) => apply({
       readDocument: async () => docs[id],
       writePatch: async (patch) => {
         writes.push({ id, patch });
-        docs[id] = { ...docs[id], dograh: { ...docs[id].dograh, ...patch } };
+        const dograh = { ...docs[id].dograh, ...patch };
+        for (const key of Object.keys(dograh)) if (dograh[key] === null) delete dograh[key];
+        docs[id] = { ...docs[id], dograh };
       },
     }),
-    fetchTranscript: async (source) => { downloads++; return download(source); },
+    fetchTranscript: async (source) => {
+      downloads++;
+      const result = await download(source);
+      return typeof result === "string" ? { status: "ok", text: result } : result;
+    },
     onSkip: (reason) => skips.push(reason),
+    onDownloadFailure: (failure) => failures.push(failure),
     onError: (error) => errors.push(error),
   };
-  return { store, docs, writes, skips, errors, downloads: () => downloads,
-    run: (body = payload()) => applyDograhWebhook(body, store) };
+  return { store, docs, writes, skips, errors, failures, downloads: () => downloads,
+    run: (body = payload(), attempt = null) => applyDograhWebhook(body, store, { attempt }) };
 }
 
 test("parses the flat v2 payload; \"\" means not sent and unknown keys are ignored", () => {
@@ -57,8 +67,7 @@ test("rejects a payload without a valid session_id, run ID, URL or summary", () 
 });
 
 test("links a delivery by session_id: download → parse → ready, empty or error; call fields are kept", async () => {
-  for (const [download, expected] of [[async () => raw, "ready"], [async () => "", "empty"],
-    [async () => { throw new Error("Unable to download the Dograh transcript."); }, "error"]]) {
+  for (const [download, expected] of [[async () => raw, "ready"], [async () => "", "empty"], [failed("http_4xx"), "error"]]) {
     const h = harness({ "session-a": callEnded() }, download);
     assert.deepEqual(await h.run(payload({ recording_url: url, call_summary: "Talked about the market." })),
       { status: "ok", changed: true });
@@ -71,7 +80,8 @@ test("links a delivery by session_id: download → parse → ready, empty or err
     assert.equal("workflowRunId" in h.writes[0].patch, false, "a stored run ID is never rewritten");
     if (expected === "ready") assert.deepEqual(dograh.transcript, parseDograhTranscriptText(raw));
     if (expected === "empty") assert.deepEqual(dograh.transcript, []);
-    assert.equal(h.errors.length, expected === "error" ? 1 : 0);
+    assert.equal(dograh.transcriptError, expected === "error" ? "http_4xx" : undefined);
+    assert.deepEqual(h.errors, []);
     assert.ok(parsePracticeSession("session-a", h.docs["session-a"]), "the session stays readable");
   }
 });
@@ -123,12 +133,56 @@ test("a redelivery is a no-op that never downloads again; an error can be retrie
     assert.equal(h.writes.length, 1);
   }
   let fail = true;
-  const h = harness({ "session-a": callEnded() }, async () => { if (fail) throw new Error("offline"); return raw; });
+  const h = harness({ "session-a": callEnded() }, async () => (fail ? { status: "error", reason: "http_5xx" } : raw));
   await h.run();
   assert.equal(h.docs["session-a"].dograh.transcriptStatus, "error");
+  assert.equal(h.docs["session-a"].dograh.transcriptError, "http_5xx");
+  assert.deepEqual(await h.run(), { status: "ok", changed: false }, "the same failure again changes nothing");
   fail = false;
   assert.deepEqual(await h.run(), { status: "ok", changed: true });
   assert.equal(h.docs["session-a"].dograh.transcriptStatus, "ready");
+  assert.equal(h.writes.at(-1).patch.transcriptError, null, "a success removes the old reason");
+  assert.equal("transcriptError" in h.docs["session-a"].dograh, false);
+  assert.ok(parsePracticeSession("session-a", h.docs["session-a"]));
+});
+
+test("X-Dograh-Delivery-Attempt: 1-based; missing or malformed means the last attempt", () => {
+  for (const [header, expected] of [["1", 1], ["5", 5], [" 3 ", 3], [null, null], ["", null], ["0", null],
+    ["-1", null], ["1.5", null], ["abc", null], ["9999999", null]]) {
+    assert.equal(parseDeliveryAttempt(header), expected, String(header));
+  }
+});
+
+test("a transient failure before the last attempt answers retry and writes nothing (TR-02)", async () => {
+  for (const reason of ["timeout", "network", "http_5xx"]) {
+    for (const attempt of [1, 2, 3, 4]) {
+      const h = harness({ "session-a": callEnded() }, failed(reason));
+      assert.deepEqual(await h.run(payload(), attempt), { status: "retry", reason });
+      assert.deepEqual(h.writes, []);
+      assert.deepEqual(h.failures, [{ reason, rejectedHost: undefined, retry: true }]);
+    }
+    for (const attempt of [5, null]) {
+      const h = harness({ "session-a": callEnded() }, failed(reason));
+      assert.deepEqual(await h.run(payload(), attempt), { status: "ok", changed: true }, `attempt ${attempt} is the last`);
+      assert.equal(h.docs["session-a"].dograh.transcriptStatus, "error");
+      assert.equal(h.docs["session-a"].dograh.transcriptError, reason);
+      assert.equal(h.failures[0].retry, false);
+    }
+  }
+  const h = harness({ "session-a": callEnded() }, async () => { throw new Error("adapter bug"); });
+  assert.deepEqual(await h.run(payload(), 1), { status: "retry", reason: "network" });
+  assert.equal(h.errors.length, 1);
+});
+
+test("a permanent failure is stored at once with its reason, and the rejected host is reported", async () => {
+  for (const reason of ["untrusted_url", "redirect_rejected", "http_4xx", "too_large", "invalid_utf8"]) {
+    const h = harness({ "session-a": callEnded() }, failed(reason, "storage.other.test"));
+    assert.deepEqual(await h.run(payload(), 1), { status: "ok", changed: true });
+    assert.equal(h.docs["session-a"].dograh.transcriptStatus, "error");
+    assert.equal(h.docs["session-a"].dograh.transcriptError, reason);
+    assert.deepEqual(h.failures, [{ reason, rejectedHost: "storage.other.test", retry: false }]);
+    assert.doesNotMatch(JSON.stringify(h.failures), /signature|https:/);
+  }
 });
 
 test("a concurrent delivery that finished first wins: the fresh read sees ready and nothing is written", async () => {
@@ -155,28 +209,42 @@ test("Firebase adapter: a transaction per phase on practiceSessions/{session_id}
   delete process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS;
   t.after(() => { if (previous !== undefined) process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS = previous; });
   t.mock.method(console, "warn", () => {});
+  const logs = [];
+  t.mock.method(console, "error", (...args) => logs.push(args));
   const updates = [], references = [];
-  let transactions = 0, allowedHosts;
+  let transactions = 0, allowedHosts, stored = callEnded({ workflowRunId: 31, transcriptStatus: "error", transcriptError: "timeout" });
+  let download = { status: "ok", text: raw };
   const { ingestDograhTranscriptWebhook } = loadTs("lib/dograh/server.ts", {
     "@/firebase/admin": { adminDb: {
       collection: (name) => ({ doc: (id) => { references.push(`${name}/${id}`); return { name, id }; } }),
       runTransaction: async (apply) => { transactions++; return apply({
-        get: async () => ({ exists: true, data: () => callEnded() }),
+        get: async () => ({ exists: true, data: () => stored }),
         update: (reference, patch) => updates.push({ reference, patch }),
       }); },
     } },
     "./fetch-transcript": { fetchDograhTranscript: async (source, allowed) => {
-      assert.equal(source, url); allowedHosts = allowed; return raw;
+      assert.equal(source, url); allowedHosts = allowed; return download;
     } },
   });
-  assert.deepEqual(await ingestDograhTranscriptWebhook(payload()), { status: "ok", changed: true });
+  assert.deepEqual(await ingestDograhTranscriptWebhook(payload(), null), { status: "ok", changed: true });
   assert.equal(transactions, 2);
   assert.deepEqual([...new Set(references)], ["practiceSessions/session-a"]);
-  assert.deepEqual(allowedHosts, ["app.dograh.com"]);
+  assert.deepEqual(allowedHosts, ["app.dograh.com", "api.dograh.com"]);
   assert.equal(updates.length, 1);
   const { patch } = updates[0];
   assert.equal(patch["dograh.transcriptStatus"], "ready");
   assert.equal(patch["dograh.transcript"][1].role, "learner");
+  assert.equal(patch["dograh.transcriptError"].constructor.name, "DeleteTransform", "the old reason is deleted");
   assert.ok("updatedAt" in patch);
   assert.equal("dograh" in patch, false);
+
+  process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS = " App.Dograh.com , storage.example.test ,";
+  stored = callEnded();
+  download = { status: "error", reason: "redirect_rejected", rejectedHost: "files.example.test" };
+  assert.deepEqual(await ingestDograhTranscriptWebhook(payload(), 2), { status: "ok", changed: true });
+  assert.deepEqual(allowedHosts, ["app.dograh.com", "storage.example.test"]);
+  assert.equal(updates.at(-1).patch["dograh.transcriptError"], "redirect_rejected");
+  assert.deepEqual(logs, [["[dograh.webhook.download]", { code: "redirect_rejected", retry: false, host: "files.example.test" }]]);
+  download = { status: "error", reason: "timeout" };
+  assert.deepEqual(await ingestDograhTranscriptWebhook(payload(), 2), { status: "retry", reason: "timeout" });
 });

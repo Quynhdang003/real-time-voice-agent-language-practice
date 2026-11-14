@@ -46,16 +46,23 @@ delivered there too). The node and its `payload_template` are specified in
 - **Payload:** flat strings; `""` means "not sent". `session_id` (from the widget context) finds the
   session; `workflow_run_id` is only a cross-check. A delivery for a missing session or for another run is
   answered 200 `skipped` and changes nothing.
-- **Transcript:** downloaded from `transcript_url` over HTTPS from a host in
-  `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` (comma-separated exact hostnames, default `app.dograh.com`), within
-  15 s and 256 KiB, strict UTF-8, signed query kept, no API key sent. The result is stored as
-  `dograh.transcript` with `dograh.transcriptStatus` `ready`, `empty` (no speech, or no `transcript_url`)
-  or `error`.
+- **Transcript:** downloaded from `transcript_url` over HTTPS. The link and every redirect hop (at most 3,
+  each checked before it is requested) must be on a host in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`
+  (comma-separated exact hostnames; default `app.dograh.com,api.dograh.com`). One 15 s deadline, 256 KiB,
+  strict UTF-8, signed query kept, no API key sent. The result is stored as `dograh.transcript` with
+  `dograh.transcriptStatus` `ready`, `empty` (no speech, or no `transcript_url`) or `error` plus a reason in
+  `dograh.transcriptError`.
+- **Retries:** a timeout, network error or 5xx from storage answers **503** without writing anything, so
+  Dograh retries (attempts 1–4). On the last attempt (`X-Dograh-Delivery-Attempt: 5`, or no header), or for a
+  permanent failure, `error` and its reason are stored.
 - **Idempotent:** once a session is `ready` or `empty`, a redelivery changes nothing and downloads nothing.
+- **Finding the storage host:** a link or redirect to a host that is not allowlisted is stored as
+  `untrusted_url` / `redirect_rejected` and logged as `[dograh.webhook.download] {code, host}` (the hostname
+  only, never the URL). Add that host to `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` on Vercel, redeploy, then redeliver.
 
-To retry a session stuck in `error`, redeliver the same body with the Bearer header (Dograh's run page,
-or `curl`). If it fails again, the download link may have expired; use the current one from Dograh's run
-page. Check that `dograh.transcriptStatus` becomes `ready` with parsed turns; HTTP 200 alone does not prove
+To retry a session stuck in `error`, redeliver with `curl` and the Bearer header, with a body holding its
+`session_id`, `workflow_run_id` and the saved `dograh.transcriptUrl` as `transcript_url` (from Firestore). If
+it fails again, the download link may have expired; use the current one from Dograh's run page. Check that `dograh.transcriptStatus` becomes `ready` with parsed turns; HTTP 200 alone does not prove
 the download worked.
 
 Run `npm run test:dograh-transcript` for the download, parser and webhook tests.
@@ -109,7 +116,7 @@ A change applies only to new deployments: redeploy after editing.
 | `ADMIN_UID` | The Firebase Auth UID of the single admin account (Firebase console → Authentication → Users). The admin has full access and approves access requests. Without it, nobody can be approved |
 | `PRACTICE_DAILY_CALL_LIMIT` | Full calls per approved learner per day, Vietnam time. Optional; `5` when unset or invalid. The admin is exempt |
 | `DOGRAH_WEBHOOK_SECRET` | A new random value (e.g. 32 random bytes as hex). DC-01 puts the same value in the Dograh Cloud `bearer_token` credential |
-| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com` (DC-01 adds the storage host) |
+| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com,api.dograh.com,<storage host>`. The storage host is the one in the Vercel logs (`[dograh.webhook.download] {code: "redirect_rejected", host}`) after the first real call |
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | The Dograh Cloud embed script URL of each workflow ([`dograh/README.md`](dograh/README.md)). Server-only; never `NEXT_PUBLIC_` |
 
 Do **not** set `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` or any `NEXT_PUBLIC_DOGRAH_*` variable on Vercel.

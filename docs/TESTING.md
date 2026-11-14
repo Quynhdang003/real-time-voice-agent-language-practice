@@ -51,9 +51,9 @@ Nếu không đặt biến này, script tìm Playwright từ thư mục dự án
 | `practice-session.test.mjs` | Mọi tổ hợp ngôn ngữ/chủ đề/trình độ/thời lượng hợp lệ được chấp nhận; ID/body sai bị từ chối; DTO loại bỏ ownership/field thừa; review sai schema bị loại |
 | `practice-session.test.mjs` | B không đọc/ghi được session A; call đi qua connecting/active/completed; callback trùng không ghi lại; không đổi run ID hoặc mở lại session terminal; lỗi mic/database được xử lý |
 | `dograh-call.test.mjs` | Start gọi widget đồng bộ và chỉ một lần; event lưu đúng thứ tự; mic bị từ chối, offline, run ID thiếu không chuyển sang review; lỗi lưu chặn event sau; dispose loại callback cũ |
-| `dograh-transcript.test.mjs` | Giữ signed query, không gửi credential; HTTPS/exact host/port hợp lệ; URL không tin cậy bị chặn trước fetch; lỗi HTTP/redirect/timeout được che chi tiết |
-| `dograh-transcript.test.mjs` | Chặn quá dung lượng theo cả header và stream; UTF-8 nhiều chunk đúng; UTF-8 lỗi bị từ chối; parser nhận assistant/user, CRLF, Unicode và dòng tiếp nối |
-| `dograh-webhook.test.mjs` (TR-01) | Payload phẳng v2, `""` = không gửi; session_id/run ID/URL sai bị từ chối; liên kết theo `session_id` → ready/empty/error, giữ field cuộc gọi; không có transcript_url → empty; session lạ, run khác, dữ liệu hỏng → skipped, không tải/ghi; phiên cũ trùng run ID không bị đụng; lưu run ID khi `connected` thất bại; gửi lại là no-op; giao song song thắng; lỗi Firestore → unavailable; adapter Firebase hai transaction, field `dograh.*` lồng nhau |
+| `dograh-transcript.test.mjs` | Giữ signed query, không gửi header/credential; HTTPS/exact host/port hợp lệ; URL không tin cậy bị chặn trước fetch (`untrusted_url` + host); (TR-02) đi theo redirect 301–308 tới storage được phép, chung một deadline, URL tương đối; đích ngoài allowlist, thiếu location, quá 3 hop → `redirect_rejected` mà không gửi request; mã lỗi `http_4xx`/`http_5xx`/`network`/`timeout` không lộ chi tiết |
+| `dograh-transcript.test.mjs` | Chặn quá dung lượng theo cả header và stream (`too_large`); UTF-8 nhiều chunk đúng; UTF-8 lỗi hoặc bị cắt → `invalid_utf8`; parser nhận assistant/user, CRLF, Unicode và dòng tiếp nối |
+| `dograh-webhook.test.mjs` (TR-01) | Payload phẳng v2, `""` = không gửi; session_id/run ID/URL sai bị từ chối; liên kết theo `session_id` → ready/empty/error, giữ field cuộc gọi; không có transcript_url → empty; session lạ, run khác, dữ liệu hỏng → skipped, không tải/ghi; phiên cũ trùng run ID không bị đụng; lưu run ID khi `connected` thất bại; gửi lại là no-op; giao song song thắng; lỗi Firestore → unavailable; adapter Firebase hai transaction, field `dograh.*` lồng nhau; (TR-02) header attempt; lỗi tạm thời ở lần 1–4 → `retry` không ghi, lần 5/thiếu header → lưu `error` + mã; lỗi vĩnh viễn lưu ngay và báo host bị chặn; thành công sau đó xoá mã lỗi; allowlist mặc định/biến môi trường |
 | `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại |
 | `review.test.mjs` | Gemini adapter xác thực JSON/schema/điểm và ánh xạ lỗi quota; lỗi ghi completion không trả thành công |
 | `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/500 |
@@ -108,9 +108,11 @@ Chỉ lưu bằng chứng đã loại bỏ cookie, token, signed URL và dữ li
 - Review bị ngắt sau khi đã claim processing chưa có lease/timeout phục hồi.
 - ~~Webhook đến trước khi session lưu run ID được ACK và bỏ qua~~ — đã sửa ở TR-01 (14/11/2026):
   webhook tìm phiên theo `session_id` và lưu run ID nếu còn thiếu.
-- Download lỗi được lưu error rồi ACK 200; cần redeliver để thử lại.
-- Với triển khai public, phải đặt `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` theo host storage thật. Mặc định
-  app.dograh.com không tự cho phép mọi host lưu trữ Dograh có thể sử dụng.
+- ~~Download lỗi được lưu error rồi ACK 200~~ — đã sửa ở TR-02 (14/11/2026): lỗi tạm thời trả 503 cho
+  tới lần gửi cuối để Dograh gửi lại; lỗi lưu kèm mã `dograh.transcriptError`.
+- Với triển khai public, phải đặt `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` gồm cả host storage thật của Dograh
+  Cloud (mặc định chỉ có `app.dograh.com,api.dograh.com`). Từ TR-02, host bị chặn được ghi vào log
+  `[dograh.webhook.download]` để tìm ra; chưa kiểm chứng với cuộc gọi thật.
 - Browser báo run ID chưa tự chứng minh run thuộc người dùng; cần kiểm chứng
   ràng buộc tin cậy trước khi coi dữ liệu transcript là đã xác thực ownership nguồn.
 

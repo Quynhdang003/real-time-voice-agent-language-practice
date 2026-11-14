@@ -83,16 +83,22 @@ Tên biến **không** có tiền tố `NEXT_PUBLIC_`. Biến chỉ nằm ở se
 2. Lặp lại với accent British, rồi lặp lại cả hai trên `localhost:3000`.
 3. Trong DevTools → Network, request `/api/v1/public/embed/init` phải có `context_variables` với
    `session_id` và đủ 18 khoá.
-4. Trong dashboard, mở run vừa gọi và tải transcript. Ghi lại **tên host** của địa chỉ cuối cùng sau khi trình
-   duyệt chuyển hướng (chỉ phần host, không gửi cả URL có chữ ký).
+4. **Host lưu trữ transcript.** Sau cuộc gọi thật đầu tiên trên production (node webhook đã bật):
+   - Vercel → project → **Logs**, lọc `dograh.webhook.download`. Dòng
+     `{code: "redirect_rejected", host: "…"}` (hoặc `untrusted_url`) cho biết **tên host** cần cho phép — chỉ
+     có tên host, không có URL ký.
+   - Đặt trên Vercel `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS=app.dograh.com,api.dograh.com,<host đó>`, rồi **Redeploy**.
+   - Gửi lại webhook của run đó bằng `curl`, header `Authorization: Bearer <DOGRAH_WEBHOOK_SECRET>`, body
+     `{"session_id": "<id phiên>", "workflow_run_id": "<run>", "transcript_url": "<dograh.transcriptUrl đã lưu>"}`
+     (lấy từ Firestore). Phiên phải chuyển sang `dograh.transcriptStatus: ready`.
+   - Cách khác: trong dashboard, mở run và tải transcript; host là tên miền của địa chỉ cuối cùng sau khi trình
+     duyệt chuyển hướng.
 5. Gửi cho tôi:
-   - host của request `/embed/init`;
-   - có cần `apiEndpoint` khi chạy local không;
+   - host của request `/embed/init` (dự kiến `api.dograh.com`, vì URL embed đã có `apiEndpoint`);
    - host lưu trữ transcript (bước 4);
    - Dograh Cloud có giới hạn chi tiêu hoặc thời lượng cuộc gọi tối đa không.
 
-   Tôi sẽ ghi các thông tin này vào `context/api-contracts.md` → "Observed on Dograh Cloud", và thêm host lưu
-   trữ vào `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`.
+   Tôi sẽ ghi các thông tin này vào `context/api-contracts.md` → "Observed on Dograh Cloud".
 6. **Export:** `npm run dograh:export -- <workflowId> fluentai-tutor-american` (làm tương tự cho British).
    File export không chứa credential, token hay key, nên được commit vào `workflows/`.
 

@@ -222,9 +222,11 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
       `durationMinutes: 1`, and the parser rejects a trial of any other
       length or a full session of 1 minute. A v2 session without `kind` is
       read as `full`.
-  - **[planned TR-02]** `dograh.transcriptError`: a reason code
-    (`untrusted_url|redirect_rejected|http_4xx|http_5xx|timeout|too_large|invalid_utf8|network`).
-    Never a URL.
+  - **[done TR-02]** `dograh.transcriptError`: a reason code
+    (`untrusted_url|redirect_rejected|http_4xx|http_5xx|timeout|too_large|invalid_utf8|network`),
+    present only with `transcriptStatus: "error"` and removed by a later
+    success. Never a URL. `parseDograhCall` keeps it, so call events do not
+    drop it.
   - **[planned TR-03]** `reviewStatus`: `pending|processing|completed|failed`,
     plus `reviewClaimedAt` (lease).
   - **[planned RV-01]** `review` v2 (`schemaVersion: 2`); see
@@ -319,16 +321,12 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
    `https://<production-domain>/api/dograh/transcript-webhook` (Dograh Cloud →
    Vercel). The session is read by `session_id`; a stored run ID that differs
    makes the delivery a no-op.
-5. Webhook → download (`https://app.dograh.com/api/v1/public/download/…`,
-   expected to answer 302 to Dograh's storage with a URL signed for 1 h;
-   confirmed in DC-01) → parse → store.
-   - Current: download failures are acknowledged with 200. Public mode
-     rejects redirects, so every download from Dograh Cloud fails today
-     (N-01f).
-   - **[planned TR-02]** Public mode follows up to 3 redirects and validates
-     every hop against the allowlist. Transient failures answer 503, so Dograh
-     retries (≤ 5 attempts). The final attempt stores `error` with a reason
-     code.
+5. Webhook → download (the `transcript_url` on a Dograh host, expected to
+   answer 302 to Dograh's storage with a URL signed for 1 h; confirmed in
+   DC-01) → parse → store. **[done TR-02]** The download follows up to 3
+   redirects and checks every hop against the allowlist before requesting
+   it. Transient failures answer 503, so Dograh retries (≤ 5 attempts); the
+   last attempt, or a permanent failure, stores `error` with a reason code.
 6. Review:
    - Current: triggered by the review page (`generate-review`).
    - **[planned TR-03]** The webhook marks `reviewStatus: pending` and starts
@@ -354,7 +352,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 7. The webhook fails closed without a configured secret. Downloads come only
    from allowlisted HTTPS hosts (`DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`), with
    ≤ 256 KiB, 15 s, ≤ 3 redirects, strict UTF-8 and no forwarded credentials.
-   **[planned TR-02]** Every redirect target is checked against the same
+   **[done TR-02]** Every redirect target is checked against the same
    allowlist before it is requested. There is no other download mode (the
    `local` mode was deleted in DC-02).
 8. Logs never contain documents, tokens, signed URLs, transcript text or
@@ -366,10 +364,11 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     belong to one Dograh instance: the stored runs 10–44 come from earlier
     local stacks, and Dograh Cloud numbers its runs on its own, so the same ID
     can name different calls.
-11. **[done TR-01: idempotent; planned TR-02: retries]** Webhook processing
-    is idempotent per `(session_id, workflow_run_id)`: once the transcript is
-    `ready` or `empty`, a redelivery neither downloads nor writes. It answers
-    within Dograh's 30 s timeout.
+11. **[done TR-01, TR-02]** Webhook processing is idempotent per
+    `(session_id, workflow_run_id)`: once the transcript is `ready` or
+    `empty`, a redelivery neither downloads nor writes. A 503 retry writes
+    nothing. It answers within Dograh's 30 s timeout (≤ 15 s download plus
+    Firestore).
     Review generation never runs inside the webhook response.
 12. **[planned RV-01]** A review is stored only if it passes the v2 validator:
     - every listed word or weak point is judged exactly once;
@@ -414,7 +413,7 @@ variable there.
 | `PRACTICE_DAILY_CALL_LIMIT` | `createPracticeSession` (`server.ts`) and `getAccessView` (`access-server.ts`) via `dailyCallLimit` | V, L | **[done LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
 | `ADMIN_UID` | `createPracticeSession` (`lib/practice/server.ts` → `isAdmin`); `/admin` and the admin routes from ACC-03 | V, L | **[done ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
 | `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[done TR-01]** The Bearer token (one word, e.g. 32 random bytes as hex); the same value goes into the Dograh Cloud `bearer_token` credential |
-| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` | V | Public mode. The code defaults to `app.dograh.com`. **[planned DC-01]** Set to `app.dograh.com` plus the storage host found in DC-01 |
+| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` (`transcriptAllowedHosts`) | V | Comma-separated exact hostnames for the transcript link and every redirect hop. Unset or blank → `app.dograh.com,api.dograh.com` (TR-02). **[DC-01]** Set to those two plus the storage host; a rejected host appears in the Vercel logs as `[dograh.webhook.download] {code, host}` |
 | `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export) | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `https://app.dograh.com` (since batch 1; DC-01 confirms the API path) |
 | `TEST_BASE_URL`, `BROWSER_TEST_TOOLING` | `scripts/*` | Shell | Test scripts only. `TEST_BASE_URL=https://<production-domain>` for the deployment smoke check |
 

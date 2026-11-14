@@ -115,9 +115,11 @@ test("webhook API checks the Bearer token before reading the body, then maps out
   const previous = process.env.DOGRAH_WEBHOOK_SECRET;
   process.env.DOGRAH_WEBHOOK_SECRET = " test-only-secret ";
   t.after(() => { if (previous === undefined) delete process.env.DOGRAH_WEBHOOK_SECRET; else process.env.DOGRAH_WEBHOOK_SECRET = previous; });
-  let calls = 0, result = { status: "ok", changed: true };
+  let calls = 0, attempts = [], result = { status: "ok", changed: true };
   const { POST } = loadTs("app/api/dograh/transcript-webhook/route.ts", {
-    "@/lib/dograh/server": { ingestDograhTranscriptWebhook: async (body) => { calls++; assert.deepEqual(body, {}); return result; } },
+    "@/lib/dograh/server": { ingestDograhTranscriptWebhook: async (body, attempt) => {
+      calls++; attempts.push(attempt); assert.deepEqual(body, {}); return result;
+    } },
   });
   const send = (headers, body = "{}") => POST(new Request("https://app.example.test", { method: "POST", headers, body }));
   for (const headers of [{}, { authorization: "Bearer wrong" }, { authorization: "Bearer test-only-secret-2" },
@@ -133,6 +135,7 @@ test("webhook API checks the Bearer token before reading the body, then maps out
     [{ status: "ok", changed: false }, 200, { success: true }],
     [{ status: "skipped", reason: "run_mismatch" }, 200, { success: false, skipped: true }],
     [{ status: "invalid_payload" }, 400, { success: false }],
+    [{ status: "retry", reason: "timeout" }, 503, { success: false }],
     [{ status: "unavailable" }, 500, { success: false }],
   ]) {
     result = outcome;
@@ -140,6 +143,10 @@ test("webhook API checks the Bearer token before reading the body, then maps out
     assert.equal(response.status, expected);
     assert.deepEqual(await response.json(), body);
   }
+  attempts = [];
+  await send({ ...bearer, "x-dograh-delivery-attempt": "3" });
+  await send({ ...bearer, "x-dograh-delivery-attempt": "zero" });
+  assert.deepEqual(attempts, [3, null], "a missing or malformed attempt counts as the last one");
   delete process.env.DOGRAH_WEBHOOK_SECRET;
   assert.equal((await send(bearer)).status, 401);
 });

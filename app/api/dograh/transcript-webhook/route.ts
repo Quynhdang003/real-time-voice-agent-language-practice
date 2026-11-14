@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { ingestDograhTranscriptWebhook } from "@/lib/dograh/server";
+import { parseDeliveryAttempt } from "@/lib/dograh/transcript-webhook";
 
 export const runtime = "nodejs";
 
@@ -24,8 +25,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false }, { status: 400 });
     }
 
-    const result = await ingestDograhTranscriptWebhook(body);
+    const attempt = parseDeliveryAttempt(request.headers.get("x-dograh-delivery-attempt"));
+    const result = await ingestDograhTranscriptWebhook(body, attempt);
     if (result.status === "ok") return NextResponse.json({ success: true });
+    // A transient download failure before the last attempt: nothing was stored, and Dograh retries 503.
+    if (result.status === "retry") return NextResponse.json({ success: false }, { status: 503 });
     // 200 so Dograh does not retry: a missing session or another run's delivery will not change.
     if (result.status === "skipped") return NextResponse.json({ success: false, skipped: true });
     if (result.status === "invalid_payload") return NextResponse.json({ success: false }, { status: 400 });

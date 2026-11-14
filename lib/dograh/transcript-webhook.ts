@@ -1,5 +1,6 @@
 import { isPracticeSessionId, isRecord, parsePracticeSession } from "@/lib/practice/session";
-import type { PracticeSession, TranscriptStatus, TranscriptTurn } from "@/lib/practice/session";
+import type { PracticeSession, TranscriptError, TranscriptStatus, TranscriptTurn } from "@/lib/practice/session";
+import type { TranscriptDownload } from "./fetch-transcript";
 import { parseDograhTranscriptText } from "./transcript-parser";
 
 const MAX_SUMMARY_LENGTH = 4000;
@@ -62,12 +63,27 @@ export type TranscriptPatch = {
   summary?: string;
   transcript?: TranscriptTurn[];
   transcriptStatus?: TranscriptStatus;
+  // null removes a reason left by an earlier failed delivery.
+  transcriptError?: TranscriptError | null;
 };
 export type SkipReason = "not_found" | "run_mismatch" | "invalid_data";
 export type WebhookOutcome =
   | { status: "ok"; changed: boolean }
   | { status: "skipped"; reason: SkipReason }
+  // A transient download failure before Dograh's last attempt: answer 503 so Dograh retries.
+  | { status: "retry"; reason: TranscriptError }
   | { status: "invalid_payload" | "unavailable" };
+
+// Dograh retries 408/425/429/5xx and network errors, at most 5 attempts in total (verified in the
+// open-source delivery task, 2026-11-14). X-Dograh-Delivery-Attempt is 1-based, so 5 is the last.
+export const MAX_DELIVERY_ATTEMPTS = 5;
+const TRANSIENT_ERRORS: readonly TranscriptError[] = ["timeout", "network", "http_5xx"];
+
+// null when the header is missing or malformed: no retry can be counted on, so it is the last attempt.
+export function parseDeliveryAttempt(header: string | null): number | null {
+  if (header === null || !/^[1-9]\d{0,5}$/.test(header.trim())) return null;
+  return Number(header.trim());
+}
 
 type WebhookTransaction = {
   readDocument: () => Promise<unknown>;
@@ -76,9 +92,9 @@ type WebhookTransaction = {
 export type WebhookStore = {
   // The adapter runs the callback atomically: the read, the decision and the write.
   transaction: <T>(sessionId: string, apply: (transaction: WebhookTransaction) => Promise<T>) => Promise<T>;
-  // May throw; a download or parse failure must not fail the delivery.
-  fetchTranscript: (url: string) => Promise<string>;
+  fetchTranscript: (url: string) => Promise<TranscriptDownload>;
   onSkip: (reason: SkipReason) => void;
+  onDownloadFailure: (failure: { reason: TranscriptError; rejectedHost?: string; retry: boolean }) => void;
   onError: (error: unknown) => void;
 };
 
@@ -101,7 +117,9 @@ function decide(sessionId: string, document: unknown, event: DograhWebhookEvent)
   return { kind: "proceed", session };
 }
 
-type Download = { transcript: TranscriptTurn[]; transcriptStatus: TranscriptStatus } | { transcriptStatus: "error" };
+type Download =
+  | { transcript: TranscriptTurn[]; transcriptStatus: "ready" | "empty" }
+  | { transcriptStatus: "error"; transcriptError: TranscriptError };
 
 function buildPatch(session: PracticeSession, event: DograhWebhookEvent, download: Download): TranscriptPatch {
   const patch: TranscriptPatch = {};
@@ -110,7 +128,8 @@ function buildPatch(session: PracticeSession, event: DograhWebhookEvent, downloa
   if (event.transcriptUrl !== undefined) patch.transcriptUrl = event.transcriptUrl;
   if (event.recordingUrl !== undefined) patch.recordingUrl = event.recordingUrl;
   if (event.summary !== undefined) patch.summary = event.summary;
-  return { ...patch, ...download };
+  if (download.transcriptStatus === "error") return { ...patch, ...download };
+  return { ...patch, ...download, ...(session.dograh?.transcriptError !== undefined ? { transcriptError: null } : {}) };
 }
 
 function isUnchanged(session: PracticeSession, patch: TranscriptPatch): boolean {
@@ -121,7 +140,9 @@ function isUnchanged(session: PracticeSession, patch: TranscriptPatch): boolean 
       : stored[key] === patch[key]);
 }
 
-export async function applyDograhWebhook(rawPayload: unknown, store: WebhookStore): Promise<WebhookOutcome> {
+export async function applyDograhWebhook(
+  rawPayload: unknown, store: WebhookStore, delivery: { attempt: number | null } = { attempt: null },
+): Promise<WebhookOutcome> {
   const event = parseDograhWebhookEvent(rawPayload);
   if (!event) return { status: "invalid_payload" };
   const finish = (decision: Exclude<Decision, { kind: "proceed" }>): WebhookOutcome => {
@@ -137,12 +158,23 @@ export async function applyDograhWebhook(rawPayload: unknown, store: WebhookStor
     // The download runs outside any transaction; no transcript_url means the call had no speech.
     let download: Download = { transcript: [], transcriptStatus: "empty" };
     if (event.transcriptUrl !== undefined) {
+      let result: TranscriptDownload;
       try {
-        const turns = parseDograhTranscriptText(await store.fetchTranscript(event.transcriptUrl));
-        download = { transcript: turns, transcriptStatus: turns.length > 0 ? "ready" : "empty" };
+        result = await store.fetchTranscript(event.transcriptUrl);
       } catch (error) {
         store.onError(error);
-        download = { transcriptStatus: "error" };
+        result = { status: "error", reason: "network" };
+      }
+      if (result.status === "ok") {
+        const turns = parseDograhTranscriptText(result.text);
+        download = { transcript: turns, transcriptStatus: turns.length > 0 ? "ready" : "empty" };
+      } else {
+        const isFinal = delivery.attempt === null || delivery.attempt >= MAX_DELIVERY_ATTEMPTS;
+        const retry = TRANSIENT_ERRORS.includes(result.reason) && !isFinal;
+        store.onDownloadFailure({ reason: result.reason, rejectedHost: result.rejectedHost, retry });
+        // Nothing is written before a retry; Dograh sends the same payload again.
+        if (retry) return { status: "retry", reason: result.reason };
+        download = { transcriptStatus: "error", transcriptError: result.reason };
       }
     }
 

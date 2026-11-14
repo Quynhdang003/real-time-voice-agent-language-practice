@@ -242,6 +242,6 @@ authentication.
      the token in the JS bundle.
    - Redeploy on Vercel, and restart `npm run dev`.
    - On `localhost:3000`, the 1.50.0 widget calls `http://localhost:8000` unless the URL has `apiEndpoint`.
-     If local calls fail that way, add `&apiEndpoint=<the Cloud API origin>` to the local value. DC-01
-     records which origin works.
+     The Cloud embed dialog already adds `apiEndpoint=https://api.dograh.com` (observed 2026-11-14), so the
+     copied URL works locally as it is. Add it by hand only to a URL that lacks it.
 6. **Export** both workflows (`npm run dograh:export -- <id> <file>`) and commit the JSON.

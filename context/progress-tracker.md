@@ -41,7 +41,8 @@ change.
      and does the manual checks listed under C-23…C-25.
   3. DC-02, TR-01, TR-02, TR-03, on branch `feat/tr-webhook-v2` (started
      2026-11-14). The code is tested with mocks; the deployment checks need
-     the Dograh Cloud workflows running (I-02). DC-02 = C-26, TR-01 = C-27.
+     the Dograh Cloud workflows running (I-02). DC-02 = C-26, TR-01 = C-27,
+     TR-02 = C-28.
   4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
@@ -445,6 +446,50 @@ without mocks.
     is set, see C-28). Check: `curl` with a wrong Bearer → 401; a real call
     on the deployment → the session gets `dograh.transcriptUrl` and a
     `transcriptStatus`, linked by `session_id`.
+- **C-28** TR-02 download reason codes, validated redirects and retries
+  (2026-11-14, batch 3):
+  - Checked first in Dograh's open-source `main` (`api/tasks/webhook_delivery.py`,
+    read 2026-11-14, no commit pinned): `X-Dograh-Delivery-Attempt` is
+    1-based, the last attempt is 5, timeout 30 s, redirects not followed.
+    Recorded in the platform contract.
+  - `fetchDograhTranscript` returns `{status: "ok", text}` or
+    `{status: "error", reason, rejectedHost?}` instead of throwing. Up to 3
+    redirects followed by hand; each target is resolved and checked
+    (HTTPS, port 443, no credentials, allowlisted host) before it is
+    requested; one 15 s deadline for all hops and the body.
+  - `transcriptErrors` / `TranscriptError` and `dograh.transcriptError` in
+    `session.ts` (type and parser), so call events keep it.
+  - `applyDograhWebhook(payload, store, {attempt})`: transient
+    (`timeout`, `network`, `http_5xx`) before the last attempt → `retry`
+    (route 503, nothing written); the last attempt (≥ 5, or a missing or
+    malformed header) or a permanent reason → `error` + `transcriptError`;
+    a later success deletes the reason (`FieldValue.delete()`).
+    `parseDeliveryAttempt` reads the header.
+  - Allowlist default `app.dograh.com,api.dograh.com`
+    (`transcriptAllowedHosts`), because the Cloud embed URL carries
+    `apiEndpoint=https://api.dograh.com`. A rejected host is logged as
+    `[dograh.webhook.download] {code, retry, host}` (hostname only), so the
+    storage host can be read from the Vercel logs.
+  - Docs: `api-contracts.md` (current webhook section, platform delivery
+    note, first "Observed on Dograh Cloud" entry), `architecture.md`,
+    README, `dograh/README.md` §4–5 (find the storage host in the logs),
+    `workflow-spec.md` embed note, `.env.example`, `docs/TESTING.md`.
+  - Verify: `tests/dograh-transcript.test.mjs` (download: redirects
+    allowed, relative, off-list / missing / 4th hop rejected before the
+    request, reason codes, size, UTF-8); `tests/dograh-webhook.test.mjs` +3
+    (attempt header; retry on attempts 1–4 with no write, stored on 5 or
+    without a header; permanent reasons with the host) and the adapter
+    (default and env allowlist, `DeleteTransform`, log line, 503 path);
+    `tests/api.test.mjs` (503, header passed through). `npm test` 104/104;
+    strip-types 5/5; typegen + `tsc`; build; lint shows only the N-02c
+    baseline.
+  - Fixes N-01b and N-01f.
+  - **Manual steps (user, after the deploy):** set
+    `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS=app.dograh.com,api.dograh.com` on Vercel
+    (or leave it unset); after the first real call, read the storage host
+    from the Vercel logs, add it, redeploy, and redeliver that run with
+    `curl` (`dograh/README.md` §5.4). Check: a real Cloud transcript reaches
+    `ready`.
 
 ## In Progress
 
@@ -555,13 +600,15 @@ stated otherwise
   - a. Unknown run → 200 `skipped`; the delivery is lost. **Fixed TR-01**
     (lookup by `session_id`; a missing run ID is stored).
   - b. A failed download is answered with 200, so Dograh does not retry.
+    **Fixed TR-02** (503 until the last attempt).
   - c. Find-then-update is not transactional. **Fixed TR-01.**
   - d. The lookup uses the browser-reported run ID with `limit(1)`, so it can
     hit an old session after a reinstall. **Fixed TR-01.**
   - e. `""` URLs → 400, which Dograh dead-letters. **Fixed TR-01.**
   - f. Redirects are rejected outside local mode. **In scope since
     2026-11-13:** Dograh Cloud's download links redirect to storage, so every
-    Cloud transcript download fails today. Fixed by TR-02.
+    Cloud transcript download fails today. **Fixed TR-02** (validated
+    redirects; the storage host still has to be allowlisted on Vercel).
 - **N-02** Review page:
   - a. Polls forever while the transcript is unset.
   - b. Can stay stuck on "Generating your review with AI…" after
