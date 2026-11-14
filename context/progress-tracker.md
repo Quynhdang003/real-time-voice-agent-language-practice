@@ -520,6 +520,9 @@ without mocks.
     background review → the page gets the saved review. `npm test` 109/109;
     strip-types 5/5; typegen + `tsc`; build; lint shows only the N-02c
     baseline.
+  - Batch check on `next start -p 3100` (commit `11df4d5`): `npm run
+    test:smoke` 13/13; `curl` to the webhook with no header, a wrong Bearer
+    or the old `x-dograh-webhook-secret` header → 401.
   - Fixes N-03a.
   - Known gap (Open Question 11): if the browser never reports the end of
     the call, the session stays `active` and no review is made.
