@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { loadTs } from "./helpers/load-ts.mjs";
 import { setup, review, profileV2, setupV2 } from "./helpers/fixtures.mjs";
+const { NextResponse } = createRequire(import.meta.url)("next/server");
 const context = { params: Promise.resolve({ sessionId: "session-a" }) };
 const request = (body = {}) => new Request("https://app.example.test/api", { method: "POST", body: JSON.stringify(body) });
 
@@ -92,12 +94,14 @@ test("call API maps domain outcomes and passes only authenticated identity", asy
 
 test("review API maps all errors and returns saved review", async () => {
   let result = { status: "ok", review }, user = null;
-  const { POST } = loadTs("app/api/practice-session/[sessionId]/generate-review/route.ts", {
+  const route = loadTs("app/api/practice-session/[sessionId]/generate-review/route.ts", {
     "@/lib/actions/auth.action": { getCurrentUser: async () => user },
     "@/lib/practice/server": { createPracticeSessionReview: async (id, uid) => {
       assert.equal(id, "session-a"); assert.equal(uid, "user-a"); return result;
     } },
   });
+  const { POST } = route;
+  assert.equal(route.maxDuration, 60, "Vercel Hobby limit for the Gemini call (TR-03)");
   assert.equal((await POST(request(), context)).status, 401);
   user = { id: "user-a" };
   assert.deepEqual((await (await POST(request(), context)).json()).review, review);
@@ -116,11 +120,16 @@ test("webhook API checks the Bearer token before reading the body, then maps out
   process.env.DOGRAH_WEBHOOK_SECRET = " test-only-secret ";
   t.after(() => { if (previous === undefined) delete process.env.DOGRAH_WEBHOOK_SECRET; else process.env.DOGRAH_WEBHOOK_SECRET = previous; });
   let calls = 0, attempts = [], result = { status: "ok", changed: true };
-  const { POST } = loadTs("app/api/dograh/transcript-webhook/route.ts", {
+  const scheduled = [], reviews = [];
+  const route = loadTs("app/api/dograh/transcript-webhook/route.ts", {
+    "next/server": { NextResponse, after: (task) => scheduled.push(task) },
+    "@/lib/practice/server": { runBackgroundSessionReview: async (id) => reviews.push(id) },
     "@/lib/dograh/server": { ingestDograhTranscriptWebhook: async (body, attempt) => {
       calls++; attempts.push(attempt); assert.deepEqual(body, {}); return result;
     } },
   });
+  const { POST } = route;
+  assert.equal(route.maxDuration, 60);
   const send = (headers, body = "{}") => POST(new Request("https://app.example.test", { method: "POST", headers, body }));
   for (const headers of [{}, { authorization: "Bearer wrong" }, { authorization: "Bearer test-only-secret-2" },
     { authorization: "test-only-secret" }, { authorization: "Basic test-only-secret" }, { authorization: "Bearer" },
@@ -147,6 +156,14 @@ test("webhook API checks the Bearer token before reading the body, then maps out
   await send({ ...bearer, "x-dograh-delivery-attempt": "3" });
   await send({ ...bearer, "x-dograh-delivery-attempt": "zero" });
   assert.deepEqual(attempts, [3, null], "a missing or malformed attempt counts as the last one");
+  assert.deepEqual(scheduled, [], "no review starts unless the webhook marked one pending");
+  result = { status: "ok", changed: true, reviewSessionId: "session-a" };
+  const response = await send(bearer);
+  assert.equal(response.status, 200);
+  assert.deepEqual(reviews, [], "the review runs after the response, not inside it (TR-03)");
+  assert.equal(scheduled.length, 1);
+  await scheduled[0]();
+  assert.deepEqual(reviews, ["session-a"]);
   delete process.env.DOGRAH_WEBHOOK_SECRET;
   assert.equal((await send(bearer)).status, 401);
 });

@@ -26,11 +26,11 @@ function harness(docs, download = async () => raw) {
   const store = {
     transaction: async (id, apply) => apply({
       readDocument: async () => docs[id],
-      writePatch: async (patch) => {
-        writes.push({ id, patch });
+      writePatch: async (patch, { markReviewPending }) => {
+        writes.push({ id, patch, markReviewPending });
         const dograh = { ...docs[id].dograh, ...patch };
         for (const key of Object.keys(dograh)) if (dograh[key] === null) delete dograh[key];
-        docs[id] = { ...docs[id], dograh };
+        docs[id] = { ...docs[id], dograh, ...(markReviewPending ? { reviewStatus: "pending" } : {}) };
       },
     }),
     fetchTranscript: async (source) => {
@@ -70,7 +70,8 @@ test("links a delivery by session_id: download → parse → ready, empty or err
   for (const [download, expected] of [[async () => raw, "ready"], [async () => "", "empty"], [failed("http_4xx"), "error"]]) {
     const h = harness({ "session-a": callEnded() }, download);
     assert.deepEqual(await h.run(payload({ recording_url: url, call_summary: "Talked about the market." })),
-      { status: "ok", changed: true });
+      { status: "ok", changed: true, ...(expected === "ready" ? { reviewSessionId: "session-a" } : {}) });
+    assert.equal(h.docs["session-a"].reviewStatus, expected === "ready" ? "pending" : undefined, "only a ready transcript queues a review");
     const { dograh } = h.docs["session-a"];
     assert.equal(dograh.transcriptStatus, expected);
     assert.equal(dograh.startedAt, "2026-11-14T10:00:00.000Z");
@@ -139,11 +140,22 @@ test("a redelivery is a no-op that never downloads again; an error can be retrie
   assert.equal(h.docs["session-a"].dograh.transcriptError, "http_5xx");
   assert.deepEqual(await h.run(), { status: "ok", changed: false }, "the same failure again changes nothing");
   fail = false;
-  assert.deepEqual(await h.run(), { status: "ok", changed: true });
+  assert.deepEqual(await h.run(), { status: "ok", changed: true, reviewSessionId: "session-a" });
   assert.equal(h.docs["session-a"].dograh.transcriptStatus, "ready");
   assert.equal(h.writes.at(-1).patch.transcriptError, null, "a success removes the old reason");
   assert.equal("transcriptError" in h.docs["session-a"].dograh, false);
   assert.ok(parsePracticeSession("session-a", h.docs["session-a"]));
+});
+
+test("a ready transcript marks the review pending once (TR-03); a completed review is never queued again", async () => {
+  for (const [reviewStatus, queued] of [[undefined, true], ["failed", true], ["pending", true], ["completed", false]]) {
+    const h = harness({ "session-a": { ...callEnded(), ...(reviewStatus ? { reviewStatus } : {}) } });
+    const outcome = await h.run();
+    assert.equal(outcome.reviewSessionId, queued ? "session-a" : undefined, String(reviewStatus));
+    assert.equal(h.writes[0].markReviewPending, queued);
+    assert.equal(h.docs["session-a"].reviewStatus, queued ? "pending" : "completed");
+    assert.deepEqual(await h.run(), { status: "ok", changed: false }, "a redelivery does not start another review");
+  }
 });
 
 test("X-Dograh-Delivery-Attempt: 1-based; missing or malformed means the last attempt", () => {
@@ -226,7 +238,7 @@ test("Firebase adapter: a transaction per phase on practiceSessions/{session_id}
       assert.equal(source, url); allowedHosts = allowed; return download;
     } },
   });
-  assert.deepEqual(await ingestDograhTranscriptWebhook(payload(), null), { status: "ok", changed: true });
+  assert.deepEqual(await ingestDograhTranscriptWebhook(payload(), null), { status: "ok", changed: true, reviewSessionId: "session-a" });
   assert.equal(transactions, 2);
   assert.deepEqual([...new Set(references)], ["practiceSessions/session-a"]);
   assert.deepEqual(allowedHosts, ["app.dograh.com", "api.dograh.com"]);
@@ -235,6 +247,7 @@ test("Firebase adapter: a transaction per phase on practiceSessions/{session_id}
   assert.equal(patch["dograh.transcriptStatus"], "ready");
   assert.equal(patch["dograh.transcript"][1].role, "learner");
   assert.equal(patch["dograh.transcriptError"].constructor.name, "DeleteTransform", "the old reason is deleted");
+  assert.equal(patch.reviewStatus, "pending", "top-level field, written in the same update");
   assert.ok("updatedAt" in patch);
   assert.equal("dograh" in patch, false);
 
@@ -244,6 +257,7 @@ test("Firebase adapter: a transaction per phase on practiceSessions/{session_id}
   assert.deepEqual(await ingestDograhTranscriptWebhook(payload(), 2), { status: "ok", changed: true });
   assert.deepEqual(allowedHosts, ["app.dograh.com", "storage.example.test"]);
   assert.equal(updates.at(-1).patch["dograh.transcriptError"], "redirect_rejected");
+  assert.equal("reviewStatus" in updates.at(-1).patch, false);
   assert.deepEqual(logs, [["[dograh.webhook.download]", { code: "redirect_rejected", retry: false, host: "files.example.test" }]]);
   download = { status: "error", reason: "timeout" };
   assert.deepEqual(await ingestDograhTranscriptWebhook(payload(), 2), { status: "retry", reason: "timeout" });

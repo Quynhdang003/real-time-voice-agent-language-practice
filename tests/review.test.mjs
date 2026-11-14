@@ -2,40 +2,102 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadTs } from "./helpers/load-ts.mjs";
 import { completed, review } from "./helpers/fixtures.mjs";
-const { generatePracticeSessionReview } = loadTs("lib/practice/review-state.ts");
+const { generateBackgroundReview, generatePracticeSessionReview, REVIEW_LEASE_MS } = loadTs("lib/practice/review-state.ts");
 
+const start = Date.parse("2026-11-14T10:00:00.000Z");
+const at = (ms) => new Date(start + ms).toISOString();
+
+// In-memory session; writes follow the adapter's rule: only while the claim still holds.
 function harness(initial = completed()) {
   let doc = initial;
+  let clock = 0;
   const calls = [];
+  const writeIfClaimed = (claimedAt, patch) => {
+    if (doc.reviewStatus !== "processing" || doc.reviewClaimedAt !== claimedAt) return false;
+    doc = { ...doc, ...patch };
+    delete doc.reviewClaimedAt;
+    return true;
+  };
   const store = {
     transaction: async (_id, apply) => apply({ readDocument: async () => doc,
-      markProcessing: async () => { doc.reviewStatus = "processing"; calls.push("claim"); } }),
+      markProcessing: async (claimedAt) => { doc = { ...doc, reviewStatus: "processing", reviewClaimedAt: claimedAt }; calls.push("claim"); } }),
     generate: async () => { calls.push("generate"); return { status: "ok", review }; },
-    writeCompleted: async (_id, value) => { calls.push("complete"); doc = { ...doc, review: value, reviewStatus: "completed" }; },
-    writeFailed: async () => { calls.push("failed"); doc.reviewStatus = "failed"; },
+    writeCompleted: async (_id, value, claimedAt) => { calls.push("complete"); return writeIfClaimed(claimedAt, { review: value, reviewStatus: "completed" }); },
+    writeFailed: async (_id, claimedAt) => { calls.push("failed"); return writeIfClaimed(claimedAt, { reviewStatus: "failed" }); },
+    now: () => at(clock),
     onError: () => calls.push("error"),
   };
-  return { store, calls, doc: () => doc, run: (id = "session-a", user = "user-a") => generatePracticeSessionReview(id, user, store) };
+  return { store, calls, doc: () => doc, setDoc: (value) => { doc = value; }, tick: (ms) => { clock += ms; },
+    run: (id = "session-a", user = "user-a") => generatePracticeSessionReview(id, user, store),
+    background: (id = "session-a") => generateBackgroundReview(id, store) };
 }
 test("review validates session IDs before opening a transaction", async () => {
   for (const id of ["", "../a", "a/b", "a".repeat(129), 123]) {
     const h = harness();
     h.store.transaction = async () => assert.fail("invalid ID must not reach database");
     assert.equal((await h.run(id)).status, "invalid_id");
+    assert.equal((await h.background(id)).status, "invalid_id");
   }
 });
 test("review gates authentication, ownership, completion and transcript states", async () => {
   for (const [doc, user, expected] of [
     [completed(), "", "unauthenticated"], [completed(), "user-b", "not_found"],
     [completed({ status: "active" }), "user-a", "not_ready"],
-    [completed({ reviewStatus: "processing" }), "user-a", "already_processing"],
+    [completed({ reviewStatus: "processing", reviewClaimedAt: at(-60_000) }), "user-a", "already_processing"],
     [completed({ dograh: { workflowRunId: 31 } }), "user-a", "transcript_pending"],
     [completed({ dograh: { workflowRunId: 31, transcriptStatus: "empty", transcript: [] } }), "user-a", "transcript_empty"],
-    [completed({ dograh: { workflowRunId: 31, transcriptStatus: "error" } }), "user-a", "transcript_error"],
+    [completed({ dograh: { workflowRunId: 31, transcriptStatus: "error", transcriptError: "http_4xx" } }), "user-a", "transcript_error"],
   ]) {
     const h = harness(doc);
     assert.equal((await h.run("session-a", user)).status, expected);
     assert.deepEqual(h.calls, []);
+  }
+});
+test("pending (set by the webhook) is claimed like a missing status", async () => {
+  const h = harness(completed({ reviewStatus: "pending" }));
+  assert.deepEqual(await h.run(), { status: "ok", review });
+  assert.equal(h.doc().reviewStatus, "completed");
+  assert.equal("reviewClaimedAt" in h.doc(), false);
+});
+test("a processing claim is a 3-minute lease: valid until then, taken over after (TR-03)", async () => {
+  assert.equal(REVIEW_LEASE_MS, 180_000);
+  for (const [claimedAt, expected] of [[at(-179_999), "already_processing"], [at(-180_000), "ok"],
+    [at(-600_000), "ok"], [undefined, "ok"], ["not a time", "ok"]]) {
+    const h = harness(completed({ reviewStatus: "processing", ...(claimedAt ? { reviewClaimedAt: claimedAt } : {}) }));
+    assert.equal((await h.run()).status, expected, String(claimedAt));
+  }
+});
+test("a result whose claim was taken over is dropped; the newer claim writes its own", async () => {
+  const h = harness();
+  let release;
+  h.store.generate = () => new Promise((resolve) => { release = resolve; });
+  const first = h.run();
+  await new Promise((resolve) => setImmediate(resolve));
+  h.tick(REVIEW_LEASE_MS);
+  h.store.generate = async () => ({ status: "ok", review: { ...review, tutorFeedback: "Second." } });
+  assert.equal((await h.run()).status, "ok");
+  release({ status: "ok", review });
+  assert.deepEqual(await first, { status: "already_processing" });
+  assert.equal(h.doc().review.tutorFeedback, "Second.");
+  const failing = harness();
+  failing.store.generate = async () => {
+    failing.setDoc({ ...failing.doc(), reviewClaimedAt: at(1) });
+    return { status: "quota" };
+  };
+  assert.deepEqual(await failing.run(), { status: "already_processing" });
+  assert.equal(failing.doc().reviewStatus, "processing");
+});
+test("the background review needs no user, uses the same claim and never repeats a completed one", async () => {
+  const h = harness(completed({ userId: "user-b", reviewStatus: "pending" }));
+  assert.deepEqual(await h.background(), { status: "ok", review });
+  assert.deepEqual(h.calls, ["claim", "generate", "complete"]);
+  assert.deepEqual(await h.background(), { status: "ok", review });
+  assert.deepEqual(h.calls, ["claim", "generate", "complete"]);
+  for (const [doc, expected] of [[null, "not_found"], [completed({ status: "active", reviewStatus: "pending" }), "not_ready"],
+    [completed({ reviewStatus: "processing", reviewClaimedAt: at(0) }), "already_processing"]]) {
+    const other = harness(doc);
+    assert.equal((await other.background()).status, expected);
+    assert.deepEqual(other.calls, []);
   }
 });
 test("successful review is persisted and repeat requests use saved result", async () => {

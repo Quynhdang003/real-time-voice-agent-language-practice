@@ -65,14 +65,15 @@ S = session cookie required. All routes below are S.
   - `corrections`: ≤ 20 items `{original, corrected, explanation}`, each field ≤ 500 chars
   - `vocabulary`: ≤ 20 items `{word ≤ 100, definition ≤ 300}`
   - `tutorFeedback`: ≤ 2,000 chars
-- `generate-review` flow:
+- `generate-review` flow (`lib/practice/review-state.ts`; lease and background trigger **[done TR-03]**). The route exports `maxDuration = 60` (Vercel Hobby), because the Gemini call runs inside the request:
   1. Check ownership, then return a completed review if one exists.
   2. Require `status: completed`.
-  3. Reject `processing` as `already_processing`.
+  3. `processing` with a valid lease (`reviewClaimedAt` less than 3 minutes old, `REVIEW_LEASE_MS`) → `already_processing`. An older claim, or one without a valid `reviewClaimedAt`, is taken over.
   4. Map the transcript status: `error` → `transcript_error`, `empty` → `transcript_empty`, not `ready` → `transcript_pending`.
-  5. Claim `reviewStatus: processing` (inside the transaction).
+  5. Claim inside the transaction: `reviewStatus: processing` + `reviewClaimedAt` (ISO time). A claim is allowed from a missing status, `pending` (set by the webhook), `failed`, or an expired `processing`.
   6. Call Gemini outside the transaction.
-  7. Write `completed` + `review`, or `reviewStatus: failed` on `quota`, `invalid_output` or `unavailable`. A failed review can be generated again.
+  7. Write `completed` + `review`, or `reviewStatus: failed` on `quota`, `invalid_output` or `unavailable`, in a transaction that checks the session still holds **this** claim (same `reviewClaimedAt`), and removes `reviewClaimedAt`. A result whose claim was taken over is dropped, and the request answers `already_processing`. A failed review can be generated again.
+  - **Background trigger:** `generateBackgroundReview(sessionId)` runs the same steps without the ownership check, because the webhook found the session by `session_id`. The webhook route starts it with `after()` (`runBackgroundSessionReview` in `lib/practice/server.ts`, which logs a non-`ok` outcome as `console.warn("[practiceSession.review.background]", {code})`). If the browser has not reported the end of the call yet, it gets `not_ready` and leaves `pending`; the review page claims it later.
 
 ## Server actions
 
@@ -144,6 +145,7 @@ S = session cookie required. All routes below are S.
   - 401 `{success: false}`
   - 503 `{success: false}`: a transient download failure before the last attempt; nothing was written, and Dograh retries (TR-02).
   - 500 `{success: false}`: `unavailable` (Firestore failed); Dograh retries.
+- **Review trigger [done TR-03]:** when step 3 stores a `ready` transcript, the same write sets the top-level `reviewStatus: "pending"` (unless it is `completed`; a completed review is never regenerated). The result carries the session ID, and the route answers 200, then starts the background review with `after()`. `empty` and `error` start nothing. The route exports `maxDuration = 60` (Vercel Hobby): the response comes within 15 s and the review uses the rest. A redelivery after `ready` is a no-op and starts nothing.
 - **Recovery:** redeliver the same body with the Bearer header (README). HTTP 200 alone does not prove that the transcript downloaded.
 
 ## Target contracts (v2, planned)
@@ -273,19 +275,9 @@ Decided 2026-11-13: registration stays open, and the number of calls per learner
 - Dograh counts size with Python `json.dumps` (`ensure_ascii`), so each non-ASCII character costs 6 bytes. A long Vietnamese scenario or word list can exceed 8 KiB.
 - Dograh then drops the **later** variables. `session_id` is first, so the webhook link survives. `dograhContextBytes()` computes the same size.
 
-### `POST /api/dograh/transcript-webhook`: still planned (TR-03)
+### `POST /api/practice-session/[sessionId]/generate-review` v2 (RV-01)
 
-TR-01 and TR-02 are done (see "Dograh-facing" above). Still planned:
-
-- **Review trigger (TR-03):** `ready` → also set `reviewStatus: "pending"` (unless it is `completed`), answer 200, then start the review with `after()`.
-- **Function limits (TR-03):** the route exports `maxDuration = 60` (fits the Vercel Hobby plan), so `after()` can finish the review. The response itself still comes within 15 s.
-
-### `POST /api/practice-session/[sessionId]/generate-review` v2 (TR-03, RV-01)
-
-- Still the page's fallback and the **Try again** action. The route exports `maxDuration = 60` like the webhook, because the Gemini call runs inside the request.
-- A claim is allowed when `reviewStatus` is missing, `pending` or `failed`, or `processing` with `reviewClaimedAt` older than 3 minutes. The claim sets `processing` + `reviewClaimedAt`.
-- The background trigger from the webhook uses the same claim. It runs on the server without a user, because ownership was established by `session_id`.
-- Success and error codes are unchanged from v1. `already_processing` is returned only while the lease is valid. `review` is v2.
+The lease, the `pending` status, `maxDuration` and the background trigger shipped in TR-03 (see "Web API" above). Still planned: `review` becomes v2 (RV-01). Success and error codes stay the same.
 
 ### Review v2 (`review`, `schemaVersion: 2`) (RV-01)
 

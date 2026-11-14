@@ -8,7 +8,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 
 | Layer      | Technology                                                    | Role                                                              |
 | ---------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Framework  | Next.js 16.3.3 (App Router) + React 19.2.8 + TypeScript 5 (strict) | Pages, server actions, API route handlers, `after()` for background work [planned] |
+| Framework  | Next.js 16.3.3 (App Router) + React 19.2.8 + TypeScript 5 (strict) | Pages, server actions, API route handlers, `after()` for background work [done TR-03] |
 | UI         | Tailwind CSS v4 + shadcn (`base-nova`, `@base-ui/react`) + lucide-react | Styling, a few generated primitives, icons                        |
 | Auth       | Firebase Authentication (client SDK 12, Admin SDK 14)         | Email/password sign-in; server session cookie                     |
 | Database   | Cloud Firestore (accessed only through the Admin SDK)         | Profiles, practice sessions, transcripts, reviews                 |
@@ -137,7 +137,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   default), so Dograh never posts to them. Their URLs are not allowed embed
   domains either. Calls run only on the production domain and on
   `localhost:3000`.
-- **Functions:** every route uses `runtime = "nodejs"`. **[planned TR-03]** The
+- **Functions:** every route uses `runtime = "nodejs"`. **[done TR-03]** The
   webhook and `generate-review` routes export `maxDuration = 60`, which fits
   the Hobby plan with or without Fluid Compute. Within those 60 s, the webhook
   answers in ≤ 15 s and the `after()` Gemini review uses the rest. If an
@@ -227,8 +227,11 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     present only with `transcriptStatus: "error"` and removed by a later
     success. Never a URL. `parseDograhCall` keeps it, so call events do not
     drop it.
-  - **[planned TR-03]** `reviewStatus`: `pending|processing|completed|failed`,
-    plus `reviewClaimedAt` (lease).
+  - **[done TR-03]** `reviewStatus`: `pending|processing|completed|failed`.
+    `pending` is written by the webhook with a `ready` transcript.
+    `reviewClaimedAt` (ISO string, top level) is the lease of a `processing`
+    claim; it is removed with the result. `parsePracticeSession` does not
+    expose it.
   - **[planned RV-01]** `review` v2 (`schemaVersion: 2`); see
     `api-contracts.md` → Target contracts.
   - Optional fields left empty are stored as `null` or `[]`, never `"none"`.
@@ -327,12 +330,13 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
    redirects and checks every hop against the allowlist before requesting
    it. Transient failures answer 503, so Dograh retries (≤ 5 attempts); the
    last attempt, or a permanent failure, stores `error` with a reason code.
-6. Review:
-   - Current: triggered by the review page (`generate-review`).
-   - **[planned TR-03]** The webhook marks `reviewStatus: pending` and starts
-     generation with `after()`, which Vercel keeps alive up to the route's
-     `maxDuration`. The page call stays as a fallback. A `processing` claim
-     older than the lease (3 min) can be reclaimed.
+6. Review **[done TR-03]**: the webhook marks `reviewStatus: pending` and
+   starts generation with `after()`, which Vercel keeps alive up to the
+   route's `maxDuration`. The review page (`generate-review`) stays as a
+   fallback and the **Try again** action. A `processing` claim older than the
+   lease (3 min) can be taken over. If the browser has not saved
+   `disconnected` yet when the background review runs, it gets `not_ready`
+   and the page claims the review later.
 
 ## Invariants
 
@@ -349,6 +353,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
    in transactions.
 6. At most one Gemini review runs per session at a time (claimed
    `processing`). A completed review is never regenerated automatically.
+   **[done TR-03]** The claim is a 3-minute lease (`reviewClaimedAt`), and a
+   result is written only while its claim still holds, so a cut-off attempt
+   that is taken over can never overwrite the newer result.
 7. The webhook fails closed without a configured secret. Downloads come only
    from allowlisted HTTPS hosts (`DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`), with
    ≤ 256 KiB, 15 s, ≤ 3 redirects, strict UTF-8 and no forwarded credentials.

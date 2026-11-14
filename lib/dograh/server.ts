@@ -31,8 +31,8 @@ export async function ingestDograhTranscriptWebhook(rawBody: unknown, attempt: n
           const snapshot = await transaction.get(reference);
           return snapshot.exists ? snapshot.data() : undefined;
         },
-        writePatch: async (patch) => {
-          transaction.update(reference, toUpdate(patch));
+        writePatch: async (patch, { markReviewPending }) => {
+          transaction.update(reference, { ...toUpdate(patch), ...(markReviewPending ? { reviewStatus: "pending" } : {}) });
         },
       });
     }),

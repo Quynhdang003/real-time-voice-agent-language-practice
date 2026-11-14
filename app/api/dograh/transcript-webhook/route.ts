@@ -1,9 +1,12 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { ingestDograhTranscriptWebhook } from "@/lib/dograh/server";
 import { parseDeliveryAttempt } from "@/lib/dograh/transcript-webhook";
+import { runBackgroundSessionReview } from "@/lib/practice/server";
 
 export const runtime = "nodejs";
+// The response comes within 15 s (download + Firestore); the after() review uses the rest (Vercel Hobby).
+export const maxDuration = 60;
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
@@ -27,7 +30,12 @@ export async function POST(request: Request) {
 
     const attempt = parseDeliveryAttempt(request.headers.get("x-dograh-delivery-attempt"));
     const result = await ingestDograhTranscriptWebhook(body, attempt);
-    if (result.status === "ok") return NextResponse.json({ success: true });
+    if (result.status === "ok") {
+      // The review never runs inside the response: Dograh waits at most 30 s for it.
+      const sessionId = result.reviewSessionId;
+      if (sessionId) after(() => runBackgroundSessionReview(sessionId));
+      return NextResponse.json({ success: true });
+    }
     // A transient download failure before the last attempt: nothing was stored, and Dograh retries 503.
     if (result.status === "retry") return NextResponse.json({ success: false }, { status: 503 });
     // 200 so Dograh does not retry: a missing session or another run's delivery will not change.

@@ -82,8 +82,7 @@ part of the target since 2026-11-13.
    (`https://<production-domain>/api/dograh/transcript-webhook`). FluentAI
    downloads the transcript (Dograh's link redirects to its storage), parses
    and stores it, marks the review `pending` and starts generating it in the
-   background. **[done TR-01: Bearer, `session_id` link; planned TR-02,
-   TR-03]**
+   background. **[done TR-01…TR-03]**
 7. The review page shows the current state: waiting for the transcript,
    generating, failed (with **Try again**), or the finished review.
    **[planned RV-01, RV-02]**
@@ -209,9 +208,10 @@ part of the target since 2026-11-13.
 - **[current]** A webhook and a 0–100 Gemini review exist, but no session
   has ever reached `transcriptStatus: ready` (see `progress-tracker.md` →
   Session Notes).
-- **[done TR-01]** The webhook is authenticated with a Bearer token, linked
-  by `session_id` and idempotent. **[planned TR-02, TR-03]** Retries for
-  transient download failures, and the review runs in the background.
+- **[done TR-01…TR-03]** The webhook is authenticated with a Bearer token,
+  linked by `session_id` and idempotent. Transient download failures are
+  retried by Dograh, and the review runs in the background. Real Cloud
+  deliveries are still to be checked on the deployment.
 - **[planned RV-01]** Review v2:
   - **Session goals:** each target/review word is `used_correctly`,
     `used_incorrectly` or `not_used`, with evidence and a correction. Grammar

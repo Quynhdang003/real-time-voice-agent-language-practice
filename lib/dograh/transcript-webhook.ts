@@ -68,7 +68,9 @@ export type TranscriptPatch = {
 };
 export type SkipReason = "not_found" | "run_mismatch" | "invalid_data";
 export type WebhookOutcome =
-  | { status: "ok"; changed: boolean }
+  // reviewSessionId: the transcript is ready and the review was marked pending, so the route starts
+  // the review with after() (TR-03).
+  | { status: "ok"; changed: boolean; reviewSessionId?: string }
   | { status: "skipped"; reason: SkipReason }
   // A transient download failure before Dograh's last attempt: answer 503 so Dograh retries.
   | { status: "retry"; reason: TranscriptError }
@@ -87,7 +89,8 @@ export function parseDeliveryAttempt(header: string | null): number | null {
 
 type WebhookTransaction = {
   readDocument: () => Promise<unknown>;
-  writePatch: (patch: TranscriptPatch) => Promise<void>;
+  // markReviewPending sets the top-level reviewStatus to "pending" in the same write.
+  writePatch: (patch: TranscriptPatch, options: { markReviewPending: boolean }) => Promise<void>;
 };
 export type WebhookStore = {
   // The adapter runs the callback atomically: the read, the decision and the write.
@@ -180,15 +183,18 @@ export async function applyDograhWebhook(
 
     // Decide again on a fresh read: another delivery may have finished meanwhile.
     const second = await store.transaction(event.sessionId, async (transaction): Promise<
-      Exclude<Decision, { kind: "proceed" }> | { kind: "written" }> => {
+      Exclude<Decision, { kind: "proceed" }> | { kind: "written"; markReviewPending: boolean }> => {
       const decision = decide(event.sessionId, await transaction.readDocument(), event);
       if (decision.kind !== "proceed") return decision;
       const patch = buildPatch(decision.session, event, download);
       if (isUnchanged(decision.session, patch)) return { kind: "done" };
-      await transaction.writePatch(patch);
-      return { kind: "written" };
+      // A completed review is never regenerated automatically.
+      const markReviewPending = patch.transcriptStatus === "ready" && decision.session.reviewStatus !== "completed";
+      await transaction.writePatch(patch, { markReviewPending });
+      return { kind: "written", markReviewPending };
     });
-    return second.kind === "written" ? { status: "ok", changed: true } : finish(second);
+    if (second.kind !== "written") return finish(second);
+    return { status: "ok", changed: true, ...(second.markReviewPending ? { reviewSessionId: event.sessionId } : {}) };
   } catch (error) {
     store.onError(error);
     return { status: "unavailable" };

@@ -56,6 +56,10 @@ delivered there too). The node and its `payload_template` are specified in
   Dograh retries (attempts 1–4). On the last attempt (`X-Dograh-Delivery-Attempt: 5`, or no header), or for a
   permanent failure, `error` and its reason are stored.
 - **Idempotent:** once a session is `ready` or `empty`, a redelivery changes nothing and downloads nothing.
+- **Review:** a `ready` transcript also sets `reviewStatus: "pending"`; after answering, the route starts the
+  Gemini review with `after()` (`maxDuration = 60` on Vercel Hobby). The review page stays as a fallback. A
+  `processing` claim is a 3-minute lease (`reviewClaimedAt`), so a review cut off by the time limit can be
+  claimed again.
 - **Finding the storage host:** a link or redirect to a host that is not allowlisted is stored as
   `untrusted_url` / `redirect_rejected` and logged as `[dograh.webhook.download] {code, host}` (the hostname
   only, never the URL). Add that host to `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` on Vercel, redeploy, then redeliver.

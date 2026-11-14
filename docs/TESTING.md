@@ -53,12 +53,12 @@ Nếu không đặt biến này, script tìm Playwright từ thư mục dự án
 | `dograh-call.test.mjs` | Start gọi widget đồng bộ và chỉ một lần; event lưu đúng thứ tự; mic bị từ chối, offline, run ID thiếu không chuyển sang review; lỗi lưu chặn event sau; dispose loại callback cũ |
 | `dograh-transcript.test.mjs` | Giữ signed query, không gửi header/credential; HTTPS/exact host/port hợp lệ; URL không tin cậy bị chặn trước fetch (`untrusted_url` + host); (TR-02) đi theo redirect 301–308 tới storage được phép, chung một deadline, URL tương đối; đích ngoài allowlist, thiếu location, quá 3 hop → `redirect_rejected` mà không gửi request; mã lỗi `http_4xx`/`http_5xx`/`network`/`timeout` không lộ chi tiết |
 | `dograh-transcript.test.mjs` | Chặn quá dung lượng theo cả header và stream (`too_large`); UTF-8 nhiều chunk đúng; UTF-8 lỗi hoặc bị cắt → `invalid_utf8`; parser nhận assistant/user, CRLF, Unicode và dòng tiếp nối |
-| `dograh-webhook.test.mjs` (TR-01) | Payload phẳng v2, `""` = không gửi; session_id/run ID/URL sai bị từ chối; liên kết theo `session_id` → ready/empty/error, giữ field cuộc gọi; không có transcript_url → empty; session lạ, run khác, dữ liệu hỏng → skipped, không tải/ghi; phiên cũ trùng run ID không bị đụng; lưu run ID khi `connected` thất bại; gửi lại là no-op; giao song song thắng; lỗi Firestore → unavailable; adapter Firebase hai transaction, field `dograh.*` lồng nhau; (TR-02) header attempt; lỗi tạm thời ở lần 1–4 → `retry` không ghi, lần 5/thiếu header → lưu `error` + mã; lỗi vĩnh viễn lưu ngay và báo host bị chặn; thành công sau đó xoá mã lỗi; allowlist mặc định/biến môi trường |
-| `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại |
+| `dograh-webhook.test.mjs` (TR-01) | Payload phẳng v2, `""` = không gửi; session_id/run ID/URL sai bị từ chối; liên kết theo `session_id` → ready/empty/error, giữ field cuộc gọi; không có transcript_url → empty; session lạ, run khác, dữ liệu hỏng → skipped, không tải/ghi; phiên cũ trùng run ID không bị đụng; lưu run ID khi `connected` thất bại; gửi lại là no-op; giao song song thắng; lỗi Firestore → unavailable; adapter Firebase hai transaction, field `dograh.*` lồng nhau; (TR-02) header attempt; lỗi tạm thời ở lần 1–4 → `retry` không ghi, lần 5/thiếu header → lưu `error` + mã; lỗi vĩnh viễn lưu ngay và báo host bị chặn; thành công sau đó xoá mã lỗi; allowlist mặc định/biến môi trường; (TR-03) transcript ready → `reviewStatus: pending` một lần, review đã hoàn tất không bị xếp lại |
+| `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại; (TR-03) `pending` được claim; lease 3 phút (2:59 còn hiệu lực, 3:00 bị lấy lại, claim cũ không có thời gian coi như hết hạn); kết quả của claim đã bị lấy lại bị bỏ; review nền không cần user, cùng claim, không chạy lại review đã xong |
 | `review.test.mjs` | Gemini adapter xác thực JSON/schema/điểm và ánh xạ lỗi quota; lỗi ghi completion không trả thành công |
-| `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/500 |
+| `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/503/500, header attempt, review chỉ chạy qua `after()` sau khi trả lời; `maxDuration = 60` ở webhook và generate-review |
 | `firebase-runtime.test.mjs` | Import Firebase Auth và lấy signing key từ RSA JWK thật mà không cần mạng, khi synchronous require(ESM) bị tắt |
-| `session-pipeline.test.mjs` | Nối logic thật từ session → call → download/parse transcript → review → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
+| `session-pipeline.test.mjs` | Nối logic thật từ session → call → webhook v2 (redirect tới storage) → review nền → trang review lấy review đã lưu → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
 
 Các test trên chưa chứng minh transaction Firestore thật, widget/microphone thật,
 chất lượng AI, hoặc toàn bộ giao diện trình duyệt. Case timeout mô phỏng fetch
@@ -105,7 +105,8 @@ Chỉ lưu bằng chứng đã loại bỏ cookie, token, signed URL và dữ li
 ## Vấn đề còn mở
 
 - Hai lỗi ESLint nêu trên chưa được sửa trong phạm vi bổ sung bộ kiểm thử.
-- Review bị ngắt sau khi đã claim processing chưa có lease/timeout phục hồi.
+- ~~Review bị ngắt sau khi đã claim processing chưa có lease/timeout phục hồi~~ — đã sửa ở TR-03
+  (14/11/2026): claim là lease 3 phút (`reviewClaimedAt`), kết quả chỉ được ghi khi claim còn giữ.
 - ~~Webhook đến trước khi session lưu run ID được ACK và bỏ qua~~ — đã sửa ở TR-01 (14/11/2026):
   webhook tìm phiên theo `session_id` và lưu run ID nếu còn thiếu.
 - ~~Download lỗi được lưu error rồi ACK 200~~ — đã sửa ở TR-02 (14/11/2026): lỗi tạm thời trả 503 cho
