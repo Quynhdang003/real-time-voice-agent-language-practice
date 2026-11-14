@@ -44,10 +44,12 @@ change.
      the user does I-04 on the deployment (Dograh Cloud credential and
      webhook node, the storage host in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`, a
      real call that ends with a review).
-  4. RV-01, RV-02, RV-03, DATA-01, on branch `feat/rv-review-v2` (started
-     2026-11-14, questions answered the same day). RV-01 = C-30, RV-02 =
-     C-31, RV-03 = C-32. E2E-01
-     follows on the deployment.
+  4. RV-01, RV-02, RV-03, DATA-01. **Code done 2026-11-14** on branch
+     `feat/rv-review-v2` (C-30…C-33). DATA-01 already ran against the shared
+     Firestore. After the merge, the user creates the RV-03 index and does
+     the manual checks under C-31 and C-32.
+  5. E2E-01 on the deployment, after batches 3 and 4 are merged and I-04 is
+     done.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
   instances that are gone now.
@@ -618,6 +620,24 @@ without mocks.
     `createdAt` ↓); after the deploy, finish a reviewed session, then open
     `/`: its weak points are pre-filled and editable, and the new session's
     document has `weakPointsSourceSessionIds`.
+- **C-33** DATA-01 legacy session cleanup (2026-11-14, batch 4):
+  - Rule (Open Question 1, answered 2026-11-14): delete only v1 sessions (no
+    `schemaVersion`, no `review`) that are (a) `ready` with no `dograh`, or
+    (b) `completed` with no transcript turns. Everything else is kept.
+  - `scripts/legacy-sessions-rule.mjs` (the rule) and
+    `scripts/cleanup-legacy-sessions.mjs` (`npm run data:cleanup-legacy`):
+    a dry run by default; `--apply --expect=N` deletes in batches, only if
+    exactly N sessions still match. It prints IDs, dates and groups only.
+  - **Run on 2026-11-14** against project `fluentai-24a25` (shared by
+    development and production):
+    - dry run: 54 sessions; group (a) 17 (2026-08-25 → 2026-09-10), group
+      (b) 32 (2026-09-07 → 2026-09-12); 5 v2 sessions kept, no other v1;
+    - the user confirmed deletion without a backup;
+    - `--apply --expect=49`: **49 deleted**; a new dry run shows 5
+      sessions, all v2, and 0 matches.
+  - Verify: `tests/legacy-cleanup.test.mjs` (the rule on 14 cases: both
+    groups, sessions with a transcript or a review, other statuses, v2,
+    null).
 
 ## In Progress
 
@@ -698,10 +718,6 @@ Rules for every unit:
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **RV-01** | Review v2 schema, prompt and validator (fixes N-03b,c,d) | TR-03 | Validator rejects fabricated evidence and missing words; one real Gemini call |
-| **RV-02** | Review page v2 + state banners + retry (fixes N-02a,b,c) | RV-01 | Each state via fixtures; two tabs; lint loses the N-02c error |
-| **RV-03** | Weak-point carry-over (3 latest completed reviews, max 5). The user creates the composite index | RV-02, SET-04 | Session N+1 shows the weak points of session N, editable |
-| **DATA-01** | Legacy session cleanup ("dọn bớt"). The rule must be confirmed first (Open Question 1) | User confirmation | A dry-run list, then deletion; counts recorded here |
 | **E2E-01** | Run the end-to-end checklist below on the Vercel deployment and record it in `docs/TESTING.md` | All above | All steps pass |
 
 **End-to-end checklist (E2E-01)**, on `https://<production-domain>` unless
@@ -981,7 +997,8 @@ Decided 2026-11-13 (CTX-02, approved by the user):
 ## Session Notes
 
 - **Root cause of "no transcript / no review" (Firestore, 49 sessions, 3 users,
-  read on 2026-11-09).** 32 sessions are `completed`, 0 transcripts are
+  read on 2026-11-09; these 49 v1 sessions were deleted by DATA-01 on
+  2026-11-14).** 32 sessions are `completed`, 0 transcripts are
   `ready`, 7 are `error`, and no session ever had a `reviewStatus`. By run:
   - runs ≤ 30 predate the webhook;
   - runs 31–32 come from commit `4968320`, which stored the URL only;

@@ -59,6 +59,7 @@ Nếu không đặt biến này, script tìm Playwright từ thư mục dự án
 | `review-v2.test.mjs` (RV-01) | Review v2 hợp lệ; so khớp trích dẫn (hoa/thường, dấu câu, nháy, cả từ); bằng chứng bịa ở mọi trường; mỗi từ/weak point đúng một lần; luật trạng thái; grammar focus; hình dạng và giới hạn; đọc review v1 và v2 đã lưu; neo CEFR |
 | `review-page.test.mjs` (RV-02) | Mỗi trạng thái phiên (chờ transcript, lỗi transcript, không có lời nói, đang tạo, thất bại, xong v2/v1) qua fixture; banner, role và nút của từng trạng thái (render bằng `react-dom/server`); giao diện v2 (mục tiêu, kỹ năng 1–5 có nhãn bậc, song ngữ) và v1; không còn thẻ Pronunciation; key remount; ánh xạ câu trả lời generate-review; hai tab trên logic claim thật |
 | `weak-points.test.mjs` (RV-03) | Gộp weak point từ review mới nhất (thứ tự, bỏ trùng không phân biệt hoa/thường); điểm `improved` loại bỏ điểm cũ; tối đa 5 mục từ tối đa 3 review; bỏ mục sai luật (`;`, > 120 ký tự); chỉ lấy review v2; ID phiên nguồn theo điểm học viên giữ lại; phiên N+1 nhận weak point của phiên N, giá trị giả trong body bị bỏ qua; truy vấn Firestore và lỗi thiếu index → danh sách rỗng |
+| `legacy-cleanup.test.mjs` (DATA-01) | Luật dọn phiên: chỉ phiên v1 `ready` chưa gọi hoặc `completed` không có transcript; giữ phiên có transcript, có review, trạng thái khác và mọi phiên v2 |
 | `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/503/500, header attempt, review chỉ chạy qua `after()` sau khi trả lời; `maxDuration = 60` ở webhook và generate-review |
 | `firebase-runtime.test.mjs` | Import Firebase Auth và lấy signing key từ RSA JWK thật mà không cần mạng, khi synchronous require(ESM) bị tắt |
 | `session-pipeline.test.mjs` | Nối logic thật từ session → call → webhook v2 (redirect tới storage) → review nền → trang review lấy review đã lưu → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
@@ -151,3 +152,10 @@ redirect đã kiểm tra cho chính sách này.
 - Lần đầu API trả 400 `INVALID_ARGUMENT`; thử từng phần schema cho thấy nguyên nhân
   là `minItems`/`maxItems`. Schema đã bỏ hai trường này, validator vẫn kiểm số lượng.
 - Chưa kiểm chứng với transcript của cuộc gọi Dograh thật (E2E-01).
+
+## Bổ sung: dọn phiên cũ — 14/11/2026 (DATA-01)
+
+- `npm run data:cleanup-legacy` chạy thử trên project `fluentai-24a25`: 54 phiên; nhóm (a) 17 phiên v1
+  `ready` chưa gọi, nhóm (b) 32 phiên v1 `completed` không có transcript; 5 phiên v2 được giữ.
+- Người dùng xác nhận xoá (không sao lưu). `--apply --expect=49` đã xoá 49 phiên; chạy thử lại còn 5
+  phiên, đều v2, không còn phiên nào khớp luật.

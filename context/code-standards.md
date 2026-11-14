@@ -211,4 +211,5 @@
 - `firebase/` — SDK initialization
 - `dograh/` — workflow spec, workflow exports and import/export scripts for
   Dograh Cloud (DG-02, DG-03, DC-01)
-- `tests/`, `scripts/` (smoke checks), `patches/`, `docs/`, `context/`
+- `tests/`, `scripts/` (smoke checks; the DATA-01 cleanup script, dry run
+  by default), `patches/`, `docs/`, `context/`
