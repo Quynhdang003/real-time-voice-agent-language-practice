@@ -638,6 +638,9 @@ without mocks.
   - Verify: `tests/legacy-cleanup.test.mjs` (the rule on 14 cases: both
     groups, sessions with a transcript or a review, other statuses, v2,
     null).
+- Batch 4 check on `next start -p 3100` (commit `0c9d85e`): `npm test`
+  137/137, strip-types 5/5, `tsc`, build, lint 0 problems, `npm run
+  test:smoke` 13/13.
 
 ## In Progress
 
