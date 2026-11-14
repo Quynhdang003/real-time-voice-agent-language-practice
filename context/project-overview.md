@@ -60,7 +60,7 @@ part of the target since 2026-11-13.
    learner fills in the session block (topic, scenario, mode, 8–12 target
    words, optional review words and grammar focus, pre-filled weak points,
    10/15/20 minutes) and presses **Start Voice Practice**.
-   **[done SET-01…SET-04; weak-point pre-fill planned RV-03]**
+   **[done SET-01…SET-04; weak-point pre-fill done RV-03]**
 3. `POST /api/practice-setup` validates the form and creates a
    `practiceSessions` document with `language: English` and the snapshot of
    profile and setup. The app then opens `/voice-call?sessionId=…`.
@@ -87,7 +87,7 @@ part of the target since 2026-11-13.
    generating, failed (with **Try again**), or the finished review.
    **[done RV-01, RV-02]**
 8. The next session's form pre-fills weak points merged from recent reviews.
-   **[planned RV-03]**
+   **[done RV-03]**
 
 ## Features
 
@@ -225,7 +225,7 @@ part of the target since 2026-11-13.
     points.
   - Every comment, explanation and correction is shown in English **and**
     Vietnamese. Quotes of the learner stay as spoken.
-- **[planned RV-03]** Weak points carry over, merged from recent reviews (max 5).
+- **[done RV-03]** Weak points carry over, merged from recent reviews (max 5).
 
 ## Scope
 

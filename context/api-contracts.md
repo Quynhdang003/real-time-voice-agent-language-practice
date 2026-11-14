@@ -190,8 +190,8 @@ Default profile when `users/{uid}.learnerProfile` is missing (proposed, see Open
 
 ### `POST /api/practice-setup` v2 — implemented (SET-03)
 
-Moved to "Web API" above. Still pending:
-- **RV-03** adds `weakPointsSourceSessionIds`, computed on the server by the same carry-over query that pre-filled the form and never read from the body.
+Moved to "Web API" above. Additions:
+- **[done RV-03]** The document also stores `weakPointsSourceSessionIds`: the sessions whose carried weak points the learner kept in the submitted `setup.weakPoints` (case-insensitive). `createPracticeSession` reads the carry-over again on the server before the transaction; a `weakPointsSourceSessionIds` key in the body is ignored. A failed read stores `[]`.
 - **ACC-01** decides the session kind from the account's access (below).
 - **LIM-01** adds the daily call limit for full sessions (below).
 
@@ -325,14 +325,18 @@ Bilingual = {en: string, vi: string}   // same content in English and Vietnamese
 - **Gemini call:** `gemini-3.5-flash-lite`, JSON output with `REVIEW_RESPONSE_SCHEMA` (nullable fields, enums, integer 1–5 scores), temperature 0.2. The schema has no `minItems`/`maxItems`, because the Gemini API answers 400 `INVALID_ARGUMENT` to them (checked 2026-11-14); the prompt states the counts and the validator enforces them. `schemaVersion: 2` is added by the code, not asked of the model.
 - **Real call (2026-11-14):** one call with the synthetic job-interview fixture (`tests/helpers/fixtures.mjs`, B1, grammar focus "Past simple") passed the full validator in 4.4 s: 8/8 target words judged, the weak point `still_present`, four skill scores, bilingual feedback.
 
-### Weak-point carry-over (RV-03)
+### Weak-point carry-over — implemented (RV-03)
 
-- **Source:** the user's 3 most recent sessions with `reviewStatus: "completed"` and a v2 review.
+Pure rules in `lib/practice/weak-points.ts` (`weakPointSourcesFrom`, `mergeCarryOver`, `weakPointSourceIds`); the query in `lib/practice/weak-points-server.ts` (`getWeakPointCarryOver`).
+
+- **Source:** the user's 3 most recent sessions with `reviewStatus: "completed"` and a v2 review. The query is `userId ==`, `reviewStatus == "completed"`, `orderBy(createdAt desc)`, `limit(10)`, `select("review")`; v1 and corrupt reviews are skipped until 3 v2 reviews are found.
+- **Index:** composite on `practiceSessions`: `userId` ascending, `reviewStatus` ascending, `createdAt` descending (collection scope). It is created by hand in the Firebase console and not versioned (Open Question 9, answered 2026-11-14). Without it the query fails (`FAILED_PRECONDITION`, logged as code `9` only), and nothing carries over.
 - **Merge, newest first:**
-  - A point marked `improved` in a newer review is dropped.
-  - `still_present`, `not_observed` and `nextWeakPoints` carry over.
+  - A point marked `improved` in a review is dropped from that review and every older one.
+  - Within a review: `still_present` points, then `nextWeakPoints[].en`, then `not_observed` points.
+  - Text is trimmed and its whitespace collapsed. Items that are empty, longer than 120 characters or contain `;` are skipped, so every item passes the `setup.weakPoints` rules.
   - Duplicates are removed case-insensitively; the maximum is 5.
-- The result pre-fills `setup.weakPoints` on `/`. The learner can edit it. The source session IDs are stored as `weakPointsSourceSessionIds`.
+- The result pre-fills `setup.weakPoints` on `/`, labelled "Weak points (from your last reviews)". The learner can edit it. Any read failure means an empty list, never an error page.
 
 ## Dograh platform contract
 

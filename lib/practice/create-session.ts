@@ -8,6 +8,8 @@ import type { AccessStatus, SessionKind } from "./access.ts";
 import { consumeCall } from "./call-quota.ts";
 import { validatePracticeSetupRequest } from "./session-setup.ts";
 import { createPracticeSessionDocumentV2 } from "./session.ts";
+import { weakPointSourceIds } from "./weak-points.ts";
+import type { CarriedWeakPoint } from "./weak-points.ts";
 
 export type CreateSessionResult =
   | { status: "ok"; sessionId: string; kind: SessionKind }
@@ -30,6 +32,8 @@ export type CreateSessionStore = {
   // Calls per approved learner per day (LIM-01); the admin is exempt.
   dailyCallLimit: number;
   transaction: <T>(apply: (transaction: CreateSessionTransaction) => Promise<T>) => Promise<T>;
+  // RV-03: the carry-over that pre-filled the form, read again on the server before the transaction.
+  carriedWeakPoints?: readonly CarriedWeakPoint[];
   now: () => Date;
   onError: (error: unknown) => void;
 };
@@ -57,7 +61,11 @@ export async function createPracticeSessionForUser(
         if (!call.ok) return { status: "call_limit_reached", limit: call.limit, resetsAt: call.resetsAt };
         await transaction.writeUser({ callQuota: call.quota });
       }
-      const document = { ...createPracticeSessionDocumentV2(request.value.profile, request.value.setup, kind), userId };
+      const document = {
+        ...createPracticeSessionDocumentV2(request.value.profile, request.value.setup, kind),
+        weakPointsSourceSessionIds: weakPointSourceIds(request.value.setup.weakPoints, store.carriedWeakPoints ?? []),
+        userId,
+      };
       const sessionId = await transaction.createSession(document);
       return { status: "ok", sessionId, kind };
     });

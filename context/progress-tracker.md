@@ -46,7 +46,7 @@ change.
      real call that ends with a review).
   4. RV-01, RV-02, RV-03, DATA-01, on branch `feat/rv-review-v2` (started
      2026-11-14, questions answered the same day). RV-01 = C-30, RV-02 =
-     C-31. E2E-01
+     C-31, RV-03 = C-32. E2E-01
      follows on the deployment.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
@@ -590,6 +590,34 @@ without mocks.
   - Fixes N-02a, N-02b, N-02c.
   - **Manual check (user, after the deploy):** open `/review` right after a
     call: waiting → generating → the v2 review, in two tabs at once.
+- **C-32** RV-03 weak-point carry-over (2026-11-14, batch 4):
+  - `lib/practice/weak-points.ts` (pure): `weakPointSourcesFrom` (the 3
+    latest v2 reviews), `mergeCarryOver` (newest first; `improved` drops the
+    point from that review and older ones; still_present → next weak points
+    → not_observed; trimmed; items that break the setup rules skipped;
+    case-insensitive dedupe; max 5), `weakPointSourceIds`.
+  - `lib/practice/weak-points-server.ts`: `getWeakPointCarryOver(userId)`,
+    one query (`userId`, `reviewStatus == completed`, `createdAt desc`,
+    limit 10, `select("review")`); any failure, such as the missing index,
+    returns `[]` and logs only the code.
+  - `/` passes the carried texts as `initialWeakPoints` (the form already
+    labels them "from your last reviews").
+  - `createPracticeSession` reads the carry-over again before the
+    transaction; `createPracticeSessionForUser` stores
+    `weakPointsSourceSessionIds` for the carried points the learner kept.
+    A value in the body is ignored.
+  - README → Deploy → Firebase: the index step.
+  - Verify: new `tests/weak-points.test.mjs` (7: order and dedupe, improved
+    drops older points, limits and invalid items, v2-only sources, source
+    IDs, session N → N+1 pre-fill that passes the setup rules and is traced
+    to N with a forged body value ignored, the adapter query and its
+    failure). `npm test` 136/136; strip-types 5/5; typegen + `tsc`; build;
+    lint 0 problems.
+  - **Manual steps (user):** create the composite index in the Firebase
+    console (`practiceSessions`: `userId` ↑, `reviewStatus` ↑,
+    `createdAt` ↓); after the deploy, finish a reviewed session, then open
+    `/`: its weak points are pre-filled and editable, and the new session's
+    document has `weakPointsSourceSessionIds`.
 
 ## In Progress
 

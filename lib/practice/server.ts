@@ -9,11 +9,15 @@ import { generateBackgroundReview, generatePracticeSessionReview } from "./revie
 import type { ReviewStore } from "./review-state";
 import { createPracticeSessionForUser } from "./create-session";
 import { dailyCallLimit } from "./call-quota";
+import { getWeakPointCarryOver } from "./weak-points-server";
 import { generateSessionReview } from "@/lib/ai/review";
 
 // POST /api/practice-setup. The users/{uid} read and all writes run in one transaction (ACC-01, LIM-01).
 export async function createPracticeSession(userId: string, body: unknown) {
+  // Outside the transaction: the source IDs only record where the pre-filled weak points came from.
+  const carriedWeakPoints = await getWeakPointCarryOver(userId);
   return createPracticeSessionForUser(userId, body, {
+    carriedWeakPoints,
     adminUid: process.env.ADMIN_UID,
     dailyCallLimit: dailyCallLimit(process.env.PRACTICE_DAILY_CALL_LIMIT),
     now: () => new Date(),

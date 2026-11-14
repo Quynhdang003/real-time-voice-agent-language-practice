@@ -133,6 +133,10 @@ widget URLs are set, `/voice-call` reports that voice calling is not configured.
 Firebase console → **Authentication → Settings → Authorized domains** → add
 `<project>.vercel.app`.
 
+Firestore → **Indexes → Composite → Create index** (needed for the weak-point carry-over, RV-03):
+collection `practiceSessions`, fields `userId` Ascending, `reviewStatus` Ascending, `createdAt` Descending,
+query scope Collection. Until it is built, the home form simply starts without carried weak points.
+
 ### 4. Verify
 
 ```bash

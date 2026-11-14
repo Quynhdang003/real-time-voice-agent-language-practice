@@ -35,6 +35,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - `session.ts`: types and parsers; re-exports the catalog and `isRecord`
   - `read-session.ts`
   - `call-state.ts`: call state machine
+  - **[done RV-03]** `weak-points.ts`: carry-over rules (pure);
+    `weak-points-server.ts`: the indexed query (`getWeakPointCarryOver`),
+    used by `/` and by `createPracticeSession`
   - **[done RV-02]** `review-view.ts`: the review page's state
     (`reviewPageStateOf`, `reviewStateKey`), what to do with a
     `generate-review` answer (`generateStepFor`), the poll interval and wait
@@ -228,7 +231,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     - `setup: {scenario, sessionMode, targetVocabulary: string[8–12],
       reviewVocabulary: string[] (0 or 3–5), grammarFocus: string | null,
       weakPoints: string[] (0–5)}`
-    - `weakPointsSourceSessionIds: string[]` [planned RV-03]
+    - **[done RV-03]** `weakPointsSourceSessionIds: string[]`: the sessions
+      whose carried weak points were kept in this session's setup. Written
+      only at creation; not exposed by `parsePracticeSession`.
     - **[done ACC-01]** `kind: "trial" | "full"`. A trial session has
       `durationMinutes: 1`, and the parser rejects a trial of any other
       length or a full session of 1 minute. A v2 session without `kind` is
@@ -251,9 +256,10 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 - **Firebase Storage**: `profile-photos/{uid}/avatar.{jpg|png}`.
 - **Dograh Cloud (external)**: audio and the transcript file in Dograh's
   storage. FluentAI stores only URLs.
-- Security rules and indexes are not versioned in this repo. RV-03 needs a
-  composite index on `practiceSessions`: `userId` +
-  `reviewStatus` + `createdAt desc`.
+- Security rules and indexes are not versioned in this repo (decided
+  2026-11-14). RV-03 needs a composite index on `practiceSessions`: `userId`
+  ascending + `reviewStatus` ascending + `createdAt` descending, created by
+  hand in the Firebase console. Without it, nothing carries over.
 
 ## Auth and Access Model
 
