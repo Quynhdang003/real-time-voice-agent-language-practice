@@ -187,6 +187,11 @@
 - `tests/*.test.mjs` use `node:test` + `node:assert/strict`. TS modules load
   through `loadTs(entry, mocks)` (`tests/helpers/load-ts.mjs`), and fixtures
   come from `tests/helpers/fixtures.mjs`.
+- `loadTs` also loads `.tsx` components (JSX `react-jsx`). Component tests
+  render the initial markup with `react-dom/server` `renderToStaticMarkup`
+  and mock `next/navigation`; effects do not run there, so polling and retry
+  rules live in pure modules (e.g. `lib/practice/review-view.ts`) and are
+  tested directly.
 - Mock only external boundaries (Firebase, Gemini, `fetch`, the widget). Test
   the real domain logic.
 - `npm test` runs everything with synchronous `require(ESM)` disabled. Type

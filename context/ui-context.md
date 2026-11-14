@@ -152,21 +152,50 @@ instead of hex values.
     Revoke (red outline). Revoke asks for `window.confirm`.
   - One decision at a time. Then `router.refresh()` updates the lists and
     the header badge. Errors show under the row (`role="alert"`).
-- Review (planned RV-02):
-  - a hero with the overall feedback
-  - **Session goals**: a vocabulary table with status badges `used_correctly`
-    (green) / `used_incorrectly` (red) / `not_used` (slate), evidence and
-    correction; grammar-focus counts with examples; weak-point statuses; the
-    scenario result
-  - **Speaking skills**: four 1–5 cards with a level anchor label, evidence
-    quotes and a comment
-  - grammar errors, next weak points, the transcript
-  - state banners: waiting for transcript / generating / failed + Try again
+- Review (RV-02, `components/fluent/review-panel.tsx` → `review-v2-view.tsx`
+  / `review-v1-view.tsx`; state rules in `lib/practice/review-view.ts`):
+  - **Bilingual text** (`BilingualText`): English first in the normal text
+    color, Vietnamese below in `text-app-muted` with `lang="vi"`. Learner
+    quotes are English only, in a `“…”` style with `text-app-text`.
+  - **State banner** (one `rounded-2xl` card, `role="status"`, or
+    `role="alert"` for failures), shown until the review is done:
+    - waiting for the transcript (`Clock`, indigo): the page refreshes every
+      5 s for up to 10 minutes (Dograh's retries take up to about 7.5
+      minutes), then says it is taking longer, with a **Check again**
+      button;
+    - generating (`LoaderCircle` spinning, indigo): the page asks for the
+      review every 5 s while another request holds it, for up to 10 minutes,
+      then **Check again**;
+    - failed (`TriangleAlert`, red): the server message and **Try again**;
+    - transcript error (red) / no learner speech (slate): final, no button.
+  - **v2 review:**
+    - hero (`shadow-highlight`): eyebrow "Overall feedback", bilingual
+      text, and a scenario chip (`Scenario completed` green / `Scenario not
+      completed` amber) with its comment and quote
+    - **Session goals**: target and review vocabulary as lists with status
+      badges `Used correctly` (green) / `Used incorrectly` (red) / `Not used`
+      (slate), the quote, and the bilingual correction and explanation;
+      grammar-focus counts (correct / incorrect) with examples; weak points
+      with badges `Improved` (green) / `Still present` (amber) / `Not
+      observed` (slate) and the quote
+    - **Speaking skills**: four cards (Grammar accuracy, Lexical range,
+      Fluency & coherence, Interaction) with `N / 5`, a level label (1 "Well
+      below B1", 2 "Below B1", 3 "At B1", 4 "Above B1", 5 "Meets B2"; for
+      C2, 5 is "Top of C2 (near-native)"), 1–3 quotes and the bilingual
+      comment
+    - grammar errors (original struck through in red, the correction in
+      green, the explanation), then **Next time** (the next weak points,
+      bilingual), then the transcript
+  - **v1 review** (generated before RV-01): the hero with the 0–100 score
+    ring, three metric cards (fluency, grammar, vocabulary), strengths,
+    corrections, vocabulary and tutor feedback, with a note that it uses
+    the earlier format. There is no pronunciation card (removed in RV-02,
+    decided 2026-11-14).
 - Voice call: status banner → alert → two participant cards
   (`lg:grid-cols-2`, tutor card highlighted with `border-2 border-app-primary`)
   → tip → centered control bar (Start/End, timer, links).
-- Review: hero with the score ring → four metric cards → a 2-column grid
-  (strengths, corrections, vocabulary, feedback) → transcript → footer actions.
+- Review: state banner or review (v2 or v1, see above) → transcript →
+  footer actions.
 - Selected state: `border-2 border-app-primary bg-indigo-50`, with
   `aria-pressed`. Unselected: `border border-app-border bg-white
   hover:border-indigo-300`.

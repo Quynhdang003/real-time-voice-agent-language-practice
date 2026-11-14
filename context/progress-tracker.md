@@ -45,7 +45,8 @@ change.
      webhook node, the storage host in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`, a
      real call that ends with a review).
   4. RV-01, RV-02, RV-03, DATA-01, on branch `feat/rv-review-v2` (started
-     2026-11-14, questions answered the same day). RV-01 = C-30. E2E-01
+     2026-11-14, questions answered the same day). RV-01 = C-30, RV-02 =
+     C-31. E2E-01
      follows on the deployment.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
@@ -560,6 +561,35 @@ without mocks.
   - **One real Gemini call** (2026-11-14, synthetic fixture, no user data):
     `ok` in 4.4 s, passed the full validator.
   - Fixes N-03b, N-03c, N-03d.
+- **C-31** RV-02 review page v2, state banners and retry (2026-11-14,
+  batch 4):
+  - `lib/practice/review-view.ts` (pure): `reviewPageStateOf` (waiting for
+    the transcript, transcript error, no learner speech, generating, failed,
+    done), `reviewStateKey`, `generateStepFor`, `skillLevelLabel`, a 5 s poll
+    and a 10-minute wait limit (covers Dograh's ~7.5-minute retries and the
+    3-minute lease).
+  - `review-panel.tsx` rewritten: one state banner (`role=status` /
+    `alert`), refresh polling while the transcript is missing, a
+    `generate-review` request that polls again while the claim is busy,
+    **Check again** after the wait limit, **Try again** after a failure.
+    The page passes `key={reviewStateKey(session)}`, so the panel remounts
+    when the stored state changes; no state is synced in an effect.
+  - `review-v2-view.tsx` (goals with status badges, grammar focus, weak
+    points, scenario, four 1–5 skills with level labels and quotes, grammar
+    errors, next weak points; `BilingualText` shows English then
+    Vietnamese with `lang="vi"`) and `review-v1-view.tsx` (the earlier
+    layout for v1 reviews). The pronunciation card is gone (Open Question
+    3, answered 2026-11-14).
+  - `ui-context.md` → Review describes the states and the layout.
+  - Verify: new `tests/review-page.test.mjs` (8: state of every fixture;
+    each state's banner, role and button rendered with `react-dom/server`;
+    the v2 and v1 views; level labels; the remount key; answer mapping;
+    two tabs on the real claim logic). `loadTs` now loads `.tsx`. `npm
+    test` 129/129; strip-types 5/5; typegen + `tsc`; build; **`npm run
+    lint` has 0 problems** (the N-02c baseline is gone).
+  - Fixes N-02a, N-02b, N-02c.
+  - **Manual check (user, after the deploy):** open `/review` right after a
+    call: waiting → generating → the v2 review, in two tabs at once.
 
 ## In Progress
 
@@ -694,7 +724,9 @@ stated otherwise
     2026-11-13:** Dograh Cloud's download links redirect to storage, so every
     Cloud transcript download fails today. **Fixed TR-02** (validated
     redirects; the storage host still has to be allowlisted on Vercel).
-- **N-02** Review page:
+- **N-02** Review page: **a, b, c fixed RV-02** (10-minute wait limit with
+  Check again; polling while the claim is busy; no synchronous setState in
+  effects, lint clean).
   - a. Polls forever while the transcript is unset.
   - b. Can stay stuck on "Generating your review with AI…" after
     `already_processing` *(inferred)*.

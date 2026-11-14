@@ -8,6 +8,7 @@ import { TutorAvatar } from "@/components/fluent/tutor-avatar";
 import { ReviewPanel } from "@/components/fluent/review-panel";
 import { getPracticeSession } from "@/lib/practice/server";
 import { practiceSessionHref } from "@/lib/practice/session";
+import { reviewStateKey } from "@/lib/practice/review-view";
 
 export const metadata: Metadata = { title: "Practice Review" };
 
@@ -33,7 +34,8 @@ export default async function ReviewPage({ searchParams }: PageProps<"/review">)
       </section>
 
       {session.status === "completed" ? (
-        <ReviewPanel session={session} />
+        // A new key remounts the panel when the transcript or review status changes, resetting its local state.
+        <ReviewPanel key={reviewStateKey(session)} session={session} />
       ) : (
         <section className="mb-8 rounded-2xl border border-indigo-100 bg-gradient-to-r from-white to-indigo-50 p-6 shadow-highlight sm:p-8">
           <h2 className="text-2xl font-bold text-app-text">No review yet</h2>

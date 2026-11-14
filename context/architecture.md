@@ -35,6 +35,10 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - `session.ts`: types and parsers; re-exports the catalog and `isRecord`
   - `read-session.ts`
   - `call-state.ts`: call state machine
+  - **[done RV-02]** `review-view.ts`: the review page's state
+    (`reviewPageStateOf`, `reviewStateKey`), what to do with a
+    `generate-review` answer (`generateStepFor`), the poll interval and wait
+    limit, and the 1–5 level labels (`skillLevelLabel`)
   - `review-state.ts`: review claim and generation (`reviewContextOf` builds
     the session goals for the prompt)
   - **[done RV-01]** `review-v2.ts`: review v2 types, `parseSessionReviewV2`
@@ -66,6 +70,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 - `firebase/` — `client.ts` (Auth, Storage), `admin.ts` (`server-only`; Auth,
   Firestore).
 - `components/fluent/`, `components/layout/`, `components/ui/` (generated).
+  **[done RV-02]** The review page uses `review-panel.tsx` (client: state
+  banner, polling, Try again), `review-v2-view.tsx` and `review-v1-view.tsx`
+  (presentational).
 - `public/dograh-frame.html` — same-origin host document for the widget.
 - `dograh/` **[done DG-02, DG-03, DC-02; Dograh Cloud setup DC-01]**:
   - `workflow-spec.md`: the source of truth for prompts and graph

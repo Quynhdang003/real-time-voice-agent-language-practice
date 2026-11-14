@@ -85,7 +85,7 @@ part of the target since 2026-11-13.
    background. **[done TR-01…TR-03]**
 7. The review page shows the current state: waiting for the transcript,
    generating, failed (with **Try again**), or the finished review.
-   **[planned RV-01, RV-02]**
+   **[done RV-01, RV-02]**
 8. The next session's form pre-fills weak points merged from recent reviews.
    **[planned RV-03]**
 

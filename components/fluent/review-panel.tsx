@@ -1,191 +1,128 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { AudioLines, BookOpenText, Braces, Mic2, ScrollText, Sparkles } from "lucide-react";
+import { CircleMinus, Clock, LoaderCircle, RefreshCw, ScrollText, TriangleAlert } from "lucide-react";
 import { isReviewV2 } from "@/lib/practice/session";
-import type { PracticeSession, SessionReview } from "@/lib/practice/session";
+import type { PracticeSession } from "@/lib/practice/session";
+import { REVIEW_POLL_INTERVAL_MS, REVIEW_WAIT_LIMIT_MS, generateStepFor, reviewPageStateOf } from "@/lib/practice/review-view";
+import type { ReviewPageState } from "@/lib/practice/review-view";
+import { cn } from "@/lib/utils";
+import { ReviewV1View } from "./review-v1-view";
+import { ReviewV2View } from "./review-v2-view";
 
-const metricIcons = { fluency: AudioLines, grammar: Braces, vocabulary: BookOpenText } as const;
-const metricLabels = { fluency: "Fluency", grammar: "Grammar", vocabulary: "Vocabulary" } as const;
+// Local overrides of the server state. The page remounts this panel (React key = reviewStateKey) whenever the
+// stored transcript or review status changes, so these never outlive the data they describe.
+type LocalState =
+  | { kind: "follow" }
+  | { kind: "stalled"; phase: "transcript" | "review" }
+  | { kind: "failed"; message: string }
+  | { kind: "final"; state: "no_speech" | "transcript_error" };
 
-function scoreLabel(score: number): string {
-  if (score >= 85) return "Excellent";
-  if (score >= 70) return "Good";
-  if (score >= 50) return "Fair";
-  return "Needs practice";
-}
+type Shown = ReviewPageState | "stalled";
 
-// Transcript availability and review generation are independent axes:
-// a "ready" transcript can exist while the review is still generating or has failed.
-type ReviewPhase = "not_ready" | "generating" | "failed" | "done";
-
-function reviewPhaseFor(session: PracticeSession): ReviewPhase {
-  if (session.review && session.reviewStatus === "completed") return "done";
-  if (session.reviewStatus === "failed") return "failed";
-  if (session.dograh?.transcriptStatus !== "ready" || !session.dograh.transcript?.length) return "not_ready";
-  return "generating";
-}
+const FALLBACK_ERROR = "Unable to generate a review. Please try again.";
 
 export function ReviewPanel({ session }: { session: PracticeSession }) {
   const router = useRouter();
-  const [reviewPhase, setReviewPhase] = useState<ReviewPhase>(() => reviewPhaseFor(session));
-  const [errorMessage, setErrorMessage] = useState("");
-  const attempted = useRef(false);
+  const serverState = reviewPageStateOf(session);
+  const [local, setLocal] = useState<LocalState>({ kind: "follow" });
+  // A stored failure starts a new attempt only when the learner asks (Try again).
+  const [retryRequested, setRetryRequested] = useState(false);
+  // Bumped to run the polling effects again (Check again, or the next poll after a busy answer).
+  const [round, setRound] = useState(0);
+  const waitingSince = useRef<number | null>(null);
 
-  useEffect(() => setReviewPhase(reviewPhaseFor(session)), [session]);
+  const shown: Shown = local.kind === "failed" ? "failed"
+    : local.kind === "stalled" ? "stalled"
+    : local.kind === "final" ? local.state
+    : serverState === "failed" && retryRequested ? "generating"
+    : serverState;
 
-  const transcriptStatus = session.dograh?.transcriptStatus;
-
-  // Poll while the webhook hasn't landed yet — Dograh delivers it asynchronously after the call ends.
+  // Waiting for the webhook: refresh the server data until the transcript arrives (N-02a: not forever).
   useEffect(() => {
-    if (transcriptStatus !== undefined) return;
-    const interval = setInterval(() => router.refresh(), 4000);
+    if (shown !== "waiting_transcript") return;
+    const started = Date.now();
+    const interval = setInterval(() => {
+      if (Date.now() - started >= REVIEW_WAIT_LIMIT_MS) {
+        clearInterval(interval);
+        setLocal({ kind: "stalled", phase: "transcript" });
+        return;
+      }
+      router.refresh();
+    }, REVIEW_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [transcriptStatus, router]);
+  }, [shown, round, router]);
 
+  // The transcript is ready: ask for the review. While another tab or the webhook's background review holds
+  // the claim, ask again every few seconds (N-02b) until it is saved or the wait limit passes.
   useEffect(() => {
-    if (reviewPhase !== "generating" || attempted.current) return;
-    attempted.current = true;
+    if (shown !== "generating") return;
+    waitingSince.current ??= Date.now();
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     (async () => {
+      let ok = false;
+      let reason: string | undefined;
+      let message: string | undefined;
       try {
-        const response = await fetch(`/api/practice-session/${session.id}/generate-review`, { method: "POST" });
-        const body: { success?: boolean; message?: string; reason?: string } | null = await response.json().catch(() => null);
-        if (cancelled) return;
-        if (response.ok && body?.success) {
-          router.refresh();
-          return;
-        }
-        if (body?.reason === "already_processing" || body?.reason === "transcript_pending") {
-          setTimeout(() => { if (!cancelled) { attempted.current = false; router.refresh(); } }, 4000);
-          return;
-        }
-        setErrorMessage(body?.message || "Unable to generate a review. Please try again.");
-        setReviewPhase("failed");
+        const response = await fetch(`/api/practice-session/${encodeURIComponent(session.id)}/generate-review`, { method: "POST" });
+        const body: { success?: boolean; reason?: string; message?: string } | null = await response.json().catch(() => null);
+        ok = response.ok && body?.success === true;
+        reason = body?.reason;
+        message = body?.message;
       } catch {
-        if (!cancelled) {
-          setErrorMessage("Unable to reach the review service. Check your connection and try again.");
-          setReviewPhase("failed");
+        if (!cancelled) setLocal({ kind: "failed", message: "Unable to reach the review service. Check your connection and try again." });
+        return;
+      }
+      if (cancelled) return;
+      const step = generateStepFor({ ok, reason });
+      if (step === "refresh") {
+        router.refresh();
+      } else if (step === "retry_later") {
+        if (Date.now() - (waitingSince.current ?? Date.now()) >= REVIEW_WAIT_LIMIT_MS) {
+          setLocal({ kind: "stalled", phase: "review" });
+          return;
         }
+        timer = setTimeout(() => {
+          router.refresh();
+          setRound((value) => value + 1);
+        }, REVIEW_POLL_INTERVAL_MS);
+      } else if (step === "failed") {
+        setLocal({ kind: "failed", message: message || FALLBACK_ERROR });
+      } else {
+        setLocal({ kind: "final", state: step });
       }
     })();
-    return () => { cancelled = true; };
-  }, [reviewPhase, session.id, router]);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [shown, round, session.id, router]);
 
-  const retry = () => { attempted.current = false; setErrorMessage(""); setReviewPhase("generating"); };
+  const startOver = () => {
+    waitingSince.current = null;
+    setRetryRequested(true);
+    setLocal({ kind: "follow" });
+    setRound((value) => value + 1);
+    router.refresh();
+  };
 
-  const heroMessage =
-    transcriptStatus === "error" ? "The transcript for this call could not be downloaded, so a review isn't available."
-    : transcriptStatus === "empty" ? "No speech was detected during this call, so a review isn't available."
-    : transcriptStatus === undefined ? "Your review will be generated once the transcript arrives — this can take a few seconds."
-    : reviewPhase === "generating" ? "Generating your review with AI…"
-    : reviewPhase === "failed" ? errorMessage
-    : null;
-
-  // Review v2 gets its own view in RV-02; until then only a v1 review is rendered here.
-  const review: SessionReview | undefined =
-    reviewPhase === "done" && session.review && !isReviewV2(session.review) ? session.review : undefined;
-
+  const review = shown === "done" ? session.review : undefined;
   const transcriptMessage =
-    transcriptStatus === undefined ? "Your transcript is on its way — this page updates automatically."
-    : transcriptStatus === "empty" ? "No speech was detected during this call, so there is no transcript to show."
-    : transcriptStatus === "error" ? "We couldn't download the transcript for this call."
+    session.dograh?.transcriptStatus === undefined ? "Your transcript is on its way — this page updates automatically."
+    : session.dograh.transcriptStatus === "empty" ? "No speech was detected during this call, so there is no transcript to show."
+    : session.dograh.transcriptStatus === "error" ? "We couldn't download the transcript for this call."
     : null;
 
   return (
     <>
-      <section className="mb-8 rounded-2xl border border-indigo-100 bg-gradient-to-r from-white to-indigo-50 p-6 shadow-highlight sm:p-8" aria-labelledby="review-status">
-        <div className="flex flex-col gap-7 lg:flex-row lg:items-center lg:justify-between">
-          <div className="max-w-2xl">
-            <div className="flex items-center gap-2 text-app-primary"><Sparkles className="h-5 w-5" /><span className="text-sm font-bold uppercase tracking-[0.1em]">Overall Score</span></div>
-            <h2 id="review-status" className="mt-4 text-2xl font-bold text-app-text">{review ? scoreLabel(review.overallScore) : "No review yet"}</h2>
-            <p className="mt-2 text-sm leading-7 text-app-muted sm:text-base">{review ? review.tutorFeedback : heroMessage}</p>
-            {reviewPhase === "failed" ? (
-              <button type="button" onClick={retry} className="mt-4 inline-flex h-10 items-center rounded-lg border border-app-border px-4 text-sm font-semibold text-app-primary hover:border-indigo-300">
-                Try again
-              </button>
-            ) : null}
-          </div>
-          <div className="flex min-w-[220px] items-center gap-5 rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm">
-            <div className="flex h-28 w-28 items-center justify-center rounded-full border-[10px] border-indigo-100 text-3xl font-bold text-app-primary" aria-label={review ? `Score ${Math.round(review.overallScore)} out of 100` : "Not assessed"}>
-              {review ? Math.round(review.overallScore) : "—"}
-            </div>
-            <div><p className="text-sm font-semibold text-app-muted">Session result</p><p className="mt-1 text-lg font-bold text-app-primary">{review ? scoreLabel(review.overallScore) : "Not assessed"}</p></div>
-          </div>
-        </div>
-      </section>
-
-      <section className="mb-8" aria-labelledby="performance-heading">
-        <h2 id="performance-heading" className="text-2xl font-bold tracking-tight text-app-text">Your performance</h2>
-        <p className="mb-5 mt-1 text-sm text-app-muted">{review ? "Scores from your latest reviewed session." : "Scores will appear when an assessment is available."}</p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {(["fluency", "grammar", "vocabulary"] as const).map((key) => {
-            const Icon = metricIcons[key];
-            const score = review?.metrics[key];
-            return (
-              <article key={key} className="rounded-2xl border border-app-border bg-white p-5 shadow-card">
-                <Icon className="h-6 w-6 text-app-primary" />
-                <h3 className="mt-4 font-bold text-app-text">{metricLabels[key]}</h3>
-                <p className="mt-3 text-2xl font-bold text-app-muted" aria-label={score !== undefined ? `Score ${Math.round(score)}` : "No score"}>
-                  {score !== undefined ? Math.round(score) : "—"}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-app-muted">{score !== undefined ? "Assessed from this session." : "Not assessed yet."}</p>
-              </article>
-            );
-          })}
-          <article className="rounded-2xl border border-app-border bg-white p-5 shadow-card">
-            <Mic2 className="h-6 w-6 text-app-primary" />
-            <h3 className="mt-4 font-bold text-app-text">Pronunciation</h3>
-            <p className="mt-3 text-2xl font-bold text-app-muted" aria-label="No score">—</p>
-            <p className="mt-2 text-sm leading-6 text-app-muted">No audio assessment available.</p>
-          </article>
-        </div>
-      </section>
-
-      <div className="mb-8 grid gap-5 lg:grid-cols-2">
-        <section className="rounded-2xl border border-app-border bg-white p-5 shadow-card sm:p-6">
-          <h2 className="text-xl font-bold text-app-text">Strengths</h2>
-          {review ? (
-            <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-7 text-app-muted">
-              {review.strengths.map((item, index) => <li key={index}>{item}</li>)}
-            </ul>
-          ) : <p className="mt-3 text-sm leading-7 text-app-muted">No feedback is available for this session yet.</p>}
-        </section>
-
-        <section className="rounded-2xl border border-app-border bg-white p-5 shadow-card sm:p-6">
-          <h2 className="text-xl font-bold text-app-text">Sentence corrections</h2>
-          {review ? (
-            review.corrections.length > 0 ? (
-              <ul className="mt-3 space-y-4 text-sm leading-6">
-                {review.corrections.map((item, index) => (
-                  <li key={index} className="rounded-xl border border-app-border p-3">
-                    <p className="text-red-600 line-through">{item.original}</p>
-                    <p className="mt-1 font-semibold text-emerald-700">{item.corrected}</p>
-                    <p className="mt-1 text-app-muted">{item.explanation}</p>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="mt-3 text-sm leading-7 text-app-muted">No corrections needed — nice work!</p>
-          ) : <p className="mt-3 text-sm leading-7 text-app-muted">No conversation has been reviewed yet.</p>}
-        </section>
-
-        <section className="rounded-2xl border border-app-border bg-white p-5 shadow-card sm:p-6">
-          <h2 className="text-xl font-bold text-app-text">Vocabulary</h2>
-          {review && review.vocabulary.length > 0 ? (
-            <ul className="mt-3 space-y-2 text-sm leading-6">
-              {review.vocabulary.map((item, index) => (
-                <li key={index}><span className="font-semibold text-app-text">{item.word}</span> — <span className="text-app-muted">{item.definition}</span></li>
-              ))}
-            </ul>
-          ) : <p className="mt-3 text-sm leading-7 text-app-muted">No vocabulary suggestions are available yet.</p>}
-        </section>
-
-        <section className="rounded-2xl border border-app-border bg-white p-5 shadow-card sm:p-6">
-          <h2 className="text-xl font-bold text-app-text">Tutor feedback</h2>
-          <p className="mt-3 text-sm leading-7 text-app-muted">{review ? review.tutorFeedback : "Your tutor's feedback will appear with your review."}</p>
-        </section>
-      </div>
+      {shown !== "done" ? (
+        <StateBanner shown={shown} local={local} onRetry={startOver} />
+      ) : review ? (
+        isReviewV2(review) ? <ReviewV2View review={review} level={session.level} /> : <ReviewV1View review={review} />
+      ) : null}
 
       <section className="mb-8 rounded-2xl border border-app-border bg-white p-5 shadow-card sm:p-6" aria-labelledby="transcript-heading">
         <div className="flex items-center gap-2"><ScrollText className="h-5 w-5 text-app-primary" /><h2 id="transcript-heading" className="text-xl font-bold text-app-text">Conversation transcript</h2></div>
@@ -203,5 +140,58 @@ export function ReviewPanel({ session }: { session: PracticeSession }) {
         )}
       </section>
     </>
+  );
+}
+
+type BannerContent = { tone: "indigo" | "red" | "slate" | "amber"; icon: ReactNode; title: string; text: string; action?: string };
+
+function bannerFor(shown: Exclude<Shown, "done">, local: LocalState): BannerContent {
+  switch (shown) {
+    case "waiting_transcript":
+      return { tone: "indigo", icon: <Clock className="h-5 w-5" />, title: "Waiting for the transcript",
+        text: "Dograh sends the transcript shortly after the call ends. This page updates by itself." };
+    case "generating":
+      return { tone: "indigo", icon: <LoaderCircle className="h-5 w-5 animate-spin" />, title: "Generating your review",
+        text: "This usually takes under a minute. You can leave this page: the review is saved when it is ready." };
+    case "stalled":
+      return { tone: "amber", icon: <Clock className="h-5 w-5" />, title: "This is taking longer than usual",
+        text: local.kind === "stalled" && local.phase === "transcript"
+          ? "The transcript has not arrived yet. Check again in a few minutes."
+          : "The review is still being generated. Check again in a minute.",
+        action: "Check again" };
+    case "failed":
+      return { tone: "red", icon: <TriangleAlert className="h-5 w-5" />, title: "The review could not be generated",
+        text: local.kind === "failed" ? local.message : FALLBACK_ERROR, action: "Try again" };
+    case "transcript_error":
+      return { tone: "red", icon: <TriangleAlert className="h-5 w-5" />, title: "No transcript",
+        text: "We couldn't download the transcript for this call, so a review isn't available." };
+    case "no_speech":
+      return { tone: "slate", icon: <CircleMinus className="h-5 w-5" />, title: "Nothing to review",
+        text: "No speech from you was detected in this call, so there is nothing to review." };
+  }
+}
+
+const bannerTones = {
+  indigo: "border-indigo-100 bg-gradient-to-r from-white to-indigo-50 text-app-primary",
+  amber: "border-amber-200 bg-amber-50 text-amber-800",
+  red: "border-red-200 bg-red-50 text-red-700",
+  slate: "border-app-border bg-white text-app-muted",
+} as const;
+
+function StateBanner({ shown, local, onRetry }: { shown: Exclude<Shown, "done">; local: LocalState; onRetry: () => void }) {
+  const content = bannerFor(shown, local);
+  const isAlert = content.tone === "red";
+  return (
+    <section className={cn("mb-8 rounded-2xl border p-6 shadow-highlight sm:p-8", bannerTones[content.tone])}
+      role={isAlert ? "alert" : "status"} aria-labelledby="review-state-title">
+      <div className="flex items-center gap-2">{content.icon}<h2 id="review-state-title" className="text-xl font-bold text-app-text">{content.title}</h2></div>
+      <p className="mt-2 max-w-2xl text-sm leading-7 text-app-muted sm:text-base">{content.text}</p>
+      {content.action ? (
+        <button type="button" onClick={onRetry}
+          className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl border border-app-border bg-white px-4 text-sm font-semibold text-app-primary hover:border-indigo-300 focus:outline-none focus:ring-4 focus:ring-indigo-100">
+          <RefreshCw className="h-4 w-4" />{content.action}
+        </button>
+      ) : null}
+    </section>
   );
 }

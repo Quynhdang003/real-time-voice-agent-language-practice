@@ -57,6 +57,7 @@ Nếu không đặt biến này, script tìm Playwright từ thư mục dự án
 | `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại; (TR-03) `pending` được claim; lease 3 phút (2:59 còn hiệu lực, 3:00 bị lấy lại, claim cũ không có thời gian coi như hết hạn); kết quả của claim đã bị lấy lại bị bỏ; review nền không cần user, cùng claim, không chạy lại review đã xong |
 | `review.test.mjs` | (RV-01) ngữ cảnh review mang mục tiêu buổi học (phiên v1 không có); transcript chỉ có lượt tutor → `transcript_empty`; adapter Gemini chỉ lưu review v2 qua validator (bằng chứng bịa, thiếu từ, review v1, JSON hỏng → `invalid_output`), ánh xạ lỗi quota; prompt injection: transcript nằm trong khối dữ liệu, `</transcript>` của học viên bị vô hiệu; cắt transcript theo lượt; lỗi ghi completion không trả thành công |
 | `review-v2.test.mjs` (RV-01) | Review v2 hợp lệ; so khớp trích dẫn (hoa/thường, dấu câu, nháy, cả từ); bằng chứng bịa ở mọi trường; mỗi từ/weak point đúng một lần; luật trạng thái; grammar focus; hình dạng và giới hạn; đọc review v1 và v2 đã lưu; neo CEFR |
+| `review-page.test.mjs` (RV-02) | Mỗi trạng thái phiên (chờ transcript, lỗi transcript, không có lời nói, đang tạo, thất bại, xong v2/v1) qua fixture; banner, role và nút của từng trạng thái (render bằng `react-dom/server`); giao diện v2 (mục tiêu, kỹ năng 1–5 có nhãn bậc, song ngữ) và v1; không còn thẻ Pronunciation; key remount; ánh xạ câu trả lời generate-review; hai tab trên logic claim thật |
 | `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/503/500, header attempt, review chỉ chạy qua `after()` sau khi trả lời; `maxDuration = 60` ở webhook và generate-review |
 | `firebase-runtime.test.mjs` | Import Firebase Auth và lấy signing key từ RSA JWK thật mà không cần mạng, khi synchronous require(ESM) bị tắt |
 | `session-pipeline.test.mjs` | Nối logic thật từ session → call → webhook v2 (redirect tới storage) → review nền → trang review lấy review đã lưu → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
@@ -105,7 +106,8 @@ Chỉ lưu bằng chứng đã loại bỏ cookie, token, signed URL và dữ li
 
 ## Vấn đề còn mở
 
-- Hai lỗi ESLint nêu trên chưa được sửa trong phạm vi bổ sung bộ kiểm thử.
+- ~~Hai lỗi ESLint nêu trên~~ — đã sửa (`.language-check.mjs` bị xoá ở EN-01; `review-panel.tsx` viết lại ở
+  RV-02). Từ 14/11/2026 `npm run lint` không còn lỗi nào.
 - ~~Review bị ngắt sau khi đã claim processing chưa có lease/timeout phục hồi~~ — đã sửa ở TR-03
   (14/11/2026): claim là lease 3 phút (`reviewClaimedAt`), kết quả chỉ được ghi khi claim còn giữ.
 - ~~Webhook đến trước khi session lưu run ID được ACK và bỏ qua~~ — đã sửa ở TR-01 (14/11/2026):

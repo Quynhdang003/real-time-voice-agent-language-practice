@@ -104,9 +104,8 @@ changes:
 3. `progress-tracker.md` reflects the completed work
 4. `npm test` passes
 5. `npm run build` passes
-6. `npm run lint` passes. Until the two baseline errors listed in
-   `progress-tracker.md` (N-02c, N-06) are fixed, a unit must not add new lint
-   errors. After they are fixed, lint must be clean.
+6. `npm run lint` is clean (0 problems). The two baseline errors (N-06,
+   N-02c) were fixed in EN-01 and RV-02.
 7. Units whose Verify column names the deployment (DEP-01, DC-01,
    ACC-02, ACC-03, LIM-01, TR-01…TR-03, E2E-01) are checked on Vercel
    production after `main` is deployed. Local tests alone do not complete them, because Dograh Cloud

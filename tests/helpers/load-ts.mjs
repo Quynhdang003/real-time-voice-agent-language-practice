@@ -12,7 +12,11 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 export function loadTs(entry, mocks = {}) {
   const cache = new Map();
   function load(filename) {
-    if (!existsSync(filename) && existsSync(`${filename}.ts`)) filename += ".ts";
+    if (!existsSync(filename)) {
+      // Components (RV-02 render tests) are .tsx; everything else is .ts.
+      if (existsSync(`${filename}.ts`)) filename += ".ts";
+      else if (existsSync(`${filename}.tsx`)) filename += ".tsx";
+    }
     if (cache.has(filename)) return cache.get(filename).exports;
     const loadedModule = { exports: {} };
     cache.set(filename, loadedModule);
@@ -25,7 +29,8 @@ export function loadTs(entry, mocks = {}) {
       return nativeRequire(specifier);
     };
     const { outputText } = ts.transpileModule(readFileSync(filename, "utf8"), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
+        jsx: ts.JsxEmit.ReactJSX },
       fileName: filename,
     });
     new Script(`(function(require,module,exports){${outputText}\n})`, { filename })
