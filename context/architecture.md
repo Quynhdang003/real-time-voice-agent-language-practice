@@ -23,7 +23,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 
 - `app/(auth)/` — `/sign-in`, `/register`. Signed-in users are redirected to `/`.
 - `app/(root)/` — `/`, `/voice-call`, `/review`. Anonymous users are redirected
-  to `/sign-in`. **[planned ACC-03]** `/admin`: only the `ADMIN_UID` account;
+  to `/sign-in`. **[done ACC-03]** `/admin`: only the `ADMIN_UID` account;
   any other signed-in user gets `notFound()`.
 - `app/api/` — thin route handlers: authenticate → parse → call `lib/` → map to
   HTTP.
@@ -38,11 +38,23 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - `review-state.ts`: review claim and generation
   - `server.ts`: Firestore adapters
   - `dograh-context.ts`: widget context builder (SET-05)
-  - **[planned LIM-01]** `call-quota.ts`: pure daily-limit rules (day key in
+  - **[done LIM-01]** `call-quota.ts`: pure daily-limit rules (day key in
     `Asia/Ho_Chi_Minh`, calls left, reset time, allow/deny)
-  - **[planned ACC-01]** `access.ts`: pure access rules (parse
-    `users/{uid}.access`, the session kind a user may create, request and
-    admin transitions, `isAdmin`); `access-server.ts`: Firestore adapters
+  - **[done ACC-01]** `access.ts`: pure access rules (`parseUserAccess`,
+    `isAdmin`, `accessLevelOf`, `sessionKindFor`). **[done ACC-02]** It also
+    has `AccessView`, `accessViewOf`, `canRequestAccess`, `requestAccess` and
+    `formatAccessDate` (Vietnam time). **[done ACC-03]** It also has the
+    admin transitions (`decideAccess`, `isUserId`) and the list rows
+    (`toAccessAccountRow`, `accessAccountLists`).
+  - **[done ACC-02]** `access-server.ts`: Firestore adapters
+    (`getAccessView`, `requestUserAccess`; one transaction on `users/{uid}`,
+    `set` with merge). **[done ACC-03]** It also has `isAdminUser`,
+    `decideUserAccess`, `listAccessAccounts` (single-field queries on
+    `access.status`, at most 200 each, sorted in memory) and
+    `countPendingRequests` (`count()` for the header badge).
+  - **[done ACC-01]** `create-session.ts`: the session-creation transaction
+    (`createPracticeSessionForUser`, pure). Its adapter is
+    `createPracticeSession` in `server.ts`.
 - `lib/dograh/` — the widget type, the browser call controller, transcript
   fetch/parse/webhook logic and `server.ts`.
 - `lib/ai/` — the Gemini client and the review prompt/schema (`server-only`).
@@ -163,16 +175,20 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     "gentle_recast"|"immediate"|"end_of_session", vietnameseAllowed:
     "never"|"only_when_stuck", updatedAt}`. Written only by **Save as
     default**.
-  - **[planned LIM-01]** `callQuota`: `{day: "YYYY-MM-DD", used: int ≥ 0}`.
+  - **[done LIM-01]** `callQuota`: `{day: "YYYY-MM-DD", used: int ≥ 0}`.
     `day` is the calendar day in `Asia/Ho_Chi_Minh`. Written only by the
     transaction that creates a practice session. A missing field, or a `day`
     other than today, means 0 calls used.
-  - **[planned ACC-01]** `access`:
+  - **[done ACC-01: read and `trialUsed`; ACC-02: the request fields; ACC-03: decisions]**
+    `access`:
     - `status`: `none | pending | approved | rejected`
     - `trialUsed`: boolean
-    - `requestedAt`: Timestamp | null
+    - `requestedAt`: ISO string | null
     - `requestMessage`: string ≤ 300 | null
-    - `decidedAt`: Timestamp | null
+    - `decidedAt`: ISO string | null
+
+    Timestamps are ISO strings written by server code, like
+    `dograh.startedAt`, so the pure rules need no Firestore types.
 
     A missing field means `{status: "none", trialUsed: false}`, which covers
     accounts created before ACC-01. Writers:
@@ -207,8 +223,10 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
       reviewVocabulary: string[] (0 or 3–5), grammarFocus: string | null,
       weakPoints: string[] (0–5)}`
     - `weakPointsSourceSessionIds: string[]` [planned RV-03]
-    - **[planned ACC-01]** `kind: "trial" | "full"`. A trial session has
-      `durationMinutes: 1`. A v2 session without `kind` is read as `full`.
+    - **[done ACC-01]** `kind: "trial" | "full"`. A trial session has
+      `durationMinutes: 1`, and the parser rejects a trial of any other
+      length or a full session of 1 minute. A v2 session without `kind` is
+      read as `full`.
   - **[planned TR-02]** `dograh.transcriptError`: a reason code
     (`untrusted_url|redirect_rejected|http_4xx|http_5xx|timeout|too_large|invalid_utf8|network`).
     Never a URL.
@@ -238,7 +256,8 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 - One owner (`userId`) per session. Another user's session answers like a
   missing one (`not_found`). **[planned SET-02]** The profile is read and
   written only for the cookie's `uid`.
-- **[planned ACC-01…ACC-03] Access levels:**
+- **Access levels** (enforced at session creation since ACC-01; the
+  request flow and the admin page are planned in ACC-02 and ACC-03):
   - **Trial:** any account that is not approved. It may create one session
     with `kind: "trial"` (1 minute).
   - **Full:** an account with `access.status: "approved"`. It may create
@@ -265,7 +284,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - A learner in a call can still read the token. Allowed domains stop
     browsers on other origins, but not scripted requests. This residual risk
     is accepted for the thesis.
-  - **[planned LIM-01, ACC-01]** The trial rule and the daily call limit
+  - **[done LIM-01, ACC-01]** The trial rule and the daily call limit
     bound the calls started through FluentAI.
   - The 1-minute trial ends through the browser countdown, which a user can
     bypass. Calls made with the token outside FluentAI are not counted. DC-01
@@ -369,15 +388,15 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     configuration value that reaches the browser is the widget script URL for
     one callable session, passed as a prop by `/voice-call`. The Dograh API
     key is never set on Vercel.
-15. **[planned LIM-01]** The daily call limit is checked and incremented in
+15. **[done LIM-01]** The daily call limit is checked and incremented in
     the same Firestore transaction that creates the session. A session is
     never created over the limit, and used calls are never given back. The
     count shown on the page is only advisory.
-16. **[planned ACC-01]** The session kind and duration are decided by the
+16. **[done ACC-01]** The session kind and duration are decided by the
     server from the stored access, in the same transaction that sets
     `trialUsed` and creates the session. The body never chooses `kind`, and a
     trial account never gets more than one session or more than 1 minute.
-17. **[planned ACC-02, ACC-03]** `access.status` changes only in two places:
+17. **[done ACC-02, ACC-03]** `access.status` changes only in two places:
     the owner's request route (`none` / `rejected` → `pending`) and the admin
     route (`pending` → `approved` / `rejected`, `approved` → `rejected`).
     Both run in transactions. Admin routes and the admin page answer 404 to
@@ -399,8 +418,8 @@ variable there.
 | `GOOGLE_GENERATIVE_AI_API_KEY` | `lib/ai/gemini.ts` | V, L | Required for reviews |
 | `NEXT_PUBLIC_DOGRAH_WIDGET_SRC`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH` | nothing | Neither | No longer read since DG-05 (they put the token into the public bundle). Delete them from `.env.local` |
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | `/voice-call` page (server, `selectWidgetSource`) → `use-dograh-widget.ts` prop | V, L | **[done DG-05]** Required per accent. Server-only. **[planned DC-01]** Dograh Cloud script URLs, copied from the Cloud embed dialog (e.g. `https://app.dograh.com/embed/dograh-widget.js?token=…`; whether `apiEndpoint` is needed locally is checked in DC-01) |
-| `PRACTICE_DAILY_CALL_LIMIT` | `POST /api/practice-setup`, the home page | V, L | **[planned LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
-| `ADMIN_UID` | `lib/practice/access.ts` (`isAdmin`), `/admin`, admin routes | V, L | **[planned ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
+| `PRACTICE_DAILY_CALL_LIMIT` | `createPracticeSession` (`server.ts`) and `getAccessView` (`access-server.ts`) via `dailyCallLimit` | V, L | **[done LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
+| `ADMIN_UID` | `createPracticeSession` (`lib/practice/server.ts` → `isAdmin`); `/admin` and the admin routes from ACC-03 | V, L | **[done ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
 | `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[planned TR-01]** Used as the Bearer token; the same value goes into the Dograh Cloud `bearer_token` credential |
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` | V | Public mode. The code defaults to `app.dograh.com`. **[planned DC-01]** Set to `app.dograh.com` plus the storage host found in DC-01 |
 | `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` | `lib/dograh/server.ts` | Neither | **[retired]** Only for the self-hosted stack. Must stay unset on Vercel. DC-02 removes them from the code |

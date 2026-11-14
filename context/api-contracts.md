@@ -9,7 +9,7 @@ Since 2026-11-13 the routes are served by the Vercel deployment (`https://<produ
 ## Conventions
 
 - Every route is `POST` with `export const runtime = "nodejs"`. Responses are JSON: success `{success: true, …}`, error `{success: false, message}`. Messages are short, generic English for the user and never contain provider details.
-- Route handlers stay thin: auth → parse JSON (`try/catch` → 400) → call `lib/` → map its `{status}` result to HTTP through a `failures` table. Names in backticks below are those `status` values. Only `generate-review` returns them to the client, as `reason`. **[planned ACC-01…ACC-03, LIM-01]** `practice-setup` (`access_required`, `call_limit_reached`), `access-request` and the admin route will also return `reason`.
+- Route handlers stay thin: auth → parse JSON (`try/catch` → 400) → call `lib/` → map its `{status}` result to HTTP through a `failures` table. Names in backticks below are those `status` values. Only `generate-review` returns them to the client, as `reason`. Since ACC-01…ACC-03 and LIM-01, `practice-setup` (`access_required`, `call_limit_reached`), `access-request` (`already_pending`, `already_approved`) and the admin route (`not_found`, `invalid_transition`) also return `reason`.
 - Auth dependencies:
   - Session cookie (`getCurrentUser()` in `lib/actions/auth.action.ts`): httpOnly cookie `fluentai_session`, verified with revocation checking. Missing or invalid → 401. `userId` always comes from the cookie, never from the body.
   - Webhook secret (`app/api/dograh/transcript-webhook/route.ts`): header `x-dograh-webhook-secret`, compared timing-safe with `DOGRAH_WEBHOOK_SECRET`. Missing or wrong → 401.
@@ -27,7 +27,7 @@ S = session cookie required. All routes below are S.
 
 | Route | | Success | Errors |
 |---|---|---|---|
-| `POST /api/practice-setup` `{profile, setup}` (below) | S | 201 `{success: true, sessionId}`; a v2 document is created with `status: "ready"` and `userId` from the cookie | 401 (checked before the body is read), 400 invalid JSON, 400 `{success: false, message, fieldErrors}`, 500 Firestore write failed |
+| `POST /api/practice-setup` `{profile, setup}` (below) | S | 201 `{success: true, sessionId}`; a v2 document is created with `status: "ready"`, `kind` and `userId` from the cookie (ACC-01) | 401 (checked before the body is read), 400 invalid JSON, 400 `{success: false, message, fieldErrors}`, 403 `{success: false, message, reason: "access_required", accessStatus}` (trial used, not approved), 429 `{success: false, message, reason: "call_limit_reached", limit, resetsAt}` (LIM-01), 500 `unavailable` |
 | `PUT /api/learner-profile` (below) | S | 200 `{success: true, profile}` | 401, 400 invalid JSON, 400 `fieldErrors`, 500 |
 | `POST /api/practice-session/[sessionId]/call-event` (body below) | S | 200 `{success: true}`; also for a repeated identical event (no write) | 401, 400 invalid JSON, 400 `invalid_id`, 400 `invalid_update`, 404 `not_found`, 409 `conflict`, 500 `invalid_data` (stored document fails parsing), 500 `unavailable` |
 | `POST /api/practice-session/[sessionId]/generate-review` (no body) | S | 200 `{success: true, review}`; a newly generated review, or the saved one when `reviewStatus` is already `completed` | `{success: false, message, reason}`: 401 `unauthenticated`, 400 `invalid_id`, 404 `not_found`, 500 `invalid_data`, 409 `not_ready` (call not `completed`), 409 `transcript_pending`, 409 `transcript_empty`, 409 `transcript_error`, 409 `already_processing`, 503 `quota`, 500 `invalid_output`, 500 `unavailable` |
@@ -95,7 +95,7 @@ S = session cookie required. All routes below are S.
 | `/` | Signed in | Practice setup |
 | `/voice-call?sessionId=…` | Signed in, owner | Failures render `SessionAccessNotice`: `missing_id`, `invalid_id`, `not_found`, `invalid_data`, `unavailable` |
 | `/review?sessionId=…` | Signed in, owner | Same notices. Shows the review only when `status` is `completed` |
-| `/admin` **[planned ACC-03]** | Signed in, `ADMIN_UID` only | Everyone else gets `notFound()` (404), never a hint that the page exists |
+| `/admin` **[done ACC-03]** | Signed in, `ADMIN_UID` only | Everyone else gets `notFound()` (404), never a hint that the page exists |
 
 ## Dograh-facing (secret header)
 
@@ -167,11 +167,13 @@ Moved to "Web API" above. Still pending:
 - **ACC-01** decides the session kind from the account's access (below).
 - **LIM-01** adds the daily call limit for full sessions (below).
 
-### Access and trial in `POST /api/practice-setup` (ACC-01)
+### Access and trial in `POST /api/practice-setup` — implemented (ACC-01)
+
+Implemented in `lib/practice/create-session.ts` (`createPracticeSessionForUser`, pure), with its adapter `createPracticeSession` in `lib/practice/server.ts`. The route maps `ok` → 201, `invalid` → 400, `access_required` → 403 and `unavailable` → 500. The client side (the banner and the trial form) was added in ACC-02.
 
 Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it needs the single admin's approval.
 
-- Order: auth → parse → read the access level → `validatePracticeSetupRequest(body, {kind})` → one Firestore transaction. For `kind: "trial"`, the validator ignores `durationMinutes`. All other field rules are unchanged.
+- Order: auth → parse JSON → one Firestore transaction. Inside it: read `users/{uid}` → access level → `validatePracticeSetupRequest(body, {kind})` → writes. For `kind: "trial"`, the validator ignores `durationMinutes`. All other field rules are unchanged. A blocked account gets 403 before its body is validated. Invalid input gets 400 without using the trial.
 - The transaction reads `users/{uid}` (`access`, `callQuota`) and decides:
 
   | Account | Result |
@@ -182,16 +184,23 @@ Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it
   | anything else, `trialUsed` true | **403** `{success: false, message, reason: "access_required", accessStatus}`; no write |
 
 - The session document adds `kind` (see the storage model). `kind` in the body is ignored, like `userId`.
-- The client reads `{kind, accessStatus, trialUsed}` from the server (passed to `/` with the profile). It hides the duration choice for a trial, and shows the access banner (`project-overview.md` → Access, trial and admin). 403 shows the same banner, for a state that changed in another tab.
+- **[done ACC-02]** `/` gets an `AccessView` `{level, status, trialUsed, requestedAt, decidedAt}` from `getAccessView` (`lib/practice/access-server.ts`), next to the profile. A read failure falls back to the initial view, and the server decides again on submit.
+  - The form validates with `{kind}`. A trial hides the duration pills, and its summary and button say "1 min (trial)" and "Start 1-minute trial".
+  - A blocked account sees "Full access needed" on a disabled button.
+  - `AccessBanner` (`components/fluent/access-banner.tsx`) shows the state and the request form.
+  - A 403 switches the view to blocked, with the returned `accessStatus`, for a state that changed in another tab.
 
 ### Access requests and admin decisions (ACC-02, ACC-03)
 
 | Route | Auth | Success | Errors |
 |---|---|---|---|
-| `POST /api/access-request` `{message?}` (ACC-02) | S | 200 `{success: true, access: {status: "pending", requestedAt}}` | 401; 400 invalid JSON or `message` > 300 chars after trimming; 409 `{reason: "already_pending" \| "already_approved"}` (the admin also gets `already_approved`); 500 |
-| `POST /api/admin/access/[uid]` `{decision}` (ACC-03) | S + admin | 200 `{success: true, access: {status, decidedAt}}`; an identical repeat is a no-op 200 | 404 for any non-admin caller (the route looks absent); 400 invalid JSON, invalid `uid` or `decision`; 404 `not_found` (no such user document); 409 `{reason: "invalid_transition"}`; 500 |
+| `POST /api/access-request` `{message?}` (**done ACC-02**: `requestAccess` in `access.ts`, adapter `requestUserAccess` in `access-server.ts`) | S | 200 `{success: true, access: {status: "pending", requestedAt}}` | 401; 400 invalid JSON or `message` > 300 chars after trimming; 409 `{reason: "already_pending" \| "already_approved"}` (the admin also gets `already_approved`); 500 |
+| `POST /api/admin/access/[uid]` `{decision}` (**done ACC-03**: `decideAccess` in `access.ts`, adapter `decideUserAccess` in `access-server.ts`) | S + admin | 200 `{success: true, access: {status, decidedAt}}`; an identical repeat is a no-op 200 | 404 for any non-admin caller, signed in or not, before the body is read (the route looks absent); 400 invalid JSON, invalid `uid` or `decision`; 404 `not_found` (no such user document); 409 `{reason: "invalid_transition"}`; 500 |
 
-- **Request:** allowed from `none` or `rejected`. It sets `status: "pending"`, `requestedAt`, `requestMessage` (trimmed, `null` if empty) and clears `decidedAt`. The trial state is unchanged.
+- **Request:** allowed from `none` or `rejected`. It sets `status: "pending"`, `requestedAt`, `requestMessage` (trimmed, whitespace collapsed, `null` if empty) and clears `decidedAt`. The trial state is unchanged.
+  - A non-string `message` → 400.
+  - The admin gets `already_approved` without a database read.
+  - The message is checked before the transaction, so an invalid one never reaches Firestore.
 - **Decisions** (each in a transaction):
   - `approve`: `pending` → `approved`
   - `reject`: `pending` → `rejected`
@@ -201,7 +210,9 @@ Decided 2026-11-13: every account gets one trial call of 1 minute. Use beyond it
 - **`/admin` data** (server component, `access-server.ts`): pending users by `requestedAt` ascending, and approved users by `decidedAt` descending. Each row shows `{uid, name, email, requestedAt, requestMessage, trialUsed, decidedAt}`. Queries use the single field `access.status` (no composite index) and are sorted in memory, at most 200 rows each. The header link shows the pending count, for the admin only.
 - Logs never contain emails or request messages.
 
-### Daily call limit (LIM-01)
+### Daily call limit — implemented (LIM-01)
+
+Implemented in `lib/practice/call-quota.ts` (pure: `dailyCallLimit`, `quotaDay`, `quotaResetsAt`, `callQuotaView`, `consumeCall`; Vietnam is UTC+7 with no daylight saving time, so the day uses a fixed offset). Enforced in `createPracticeSessionForUser` and shown through `AccessView.quota`.
 
 Decided 2026-11-13: registration stays open, and the number of calls per learner is limited to control cost.
 
@@ -214,7 +225,7 @@ Decided 2026-11-13: registration stays open, and the number of calls per learner
   - Limit reached → **429** `{success: false, message, reason: "call_limit_reached", limit, resetsAt}`. `resetsAt` is the ISO time of the next local midnight. No session is created.
   - Validation errors (400) are returned before the limit is checked and use no call.
   - `practice-setup` returns `reason` (`access_required`, `call_limit_reached`) because the form branches on it.
-- **Home page:** for an approved account, `/` receives `{limit, used, resetsAt}` from the server, alongside the profile. It shows the calls left today. When none are left, **Start Voice Practice** is disabled and the reset time is shown. The 429 response shows the same message, for a limit reached in another tab.
+- **Home page:** for an approved account, `/` receives `AccessView.quota` `{limit, used, remaining, resetsAt}` from `getAccessView`, alongside the profile (null for the admin and trial accounts). It shows the calls left today. When none are left, **Start Voice Practice** is disabled and the reset time is shown. The 429 response shows the same message, for a limit reached in another tab.
 - Not counted: sessions created before LIM-01 is deployed, trial sessions, and calls made with the embed token outside FluentAI.
 
 ### Dograh context — implemented (SET-05, `lib/practice/dograh-context.ts`)

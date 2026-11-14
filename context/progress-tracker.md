@@ -32,12 +32,13 @@ change.
 - Batches (decided 2026-11-13, at most 4 units each):
   1. DG-05, the repo part of DC-01, and the 1-minute trial guidance in the
      workflow spec (moved from ACC-01, so the user imports the workflows
-     once). **Code done 2026-11-13** on branch
-     `feat/dg-05-server-widget-url` (DG-05 = C-21; DC-01 repo part = I-02).
-     After the user merges it, DC-01 continues with the user's Dograh Cloud
-     setup and real calls.
-  2. ACC-01, ACC-02, ACC-03, LIM-01. This is code only, so it can run while
-     the user sets up Dograh Cloud (I-02).
+     once). **Merged (PR #2)**, so production has it (smoke 10/10). DG-05 =
+     C-21; the DC-01 repo part = I-02. DC-01 continues with the user's
+     Dograh Cloud setup and real calls.
+  2. ACC-01, ACC-02, ACC-03, LIM-01. **Code done 2026-11-13** on branch
+     `feat/acc-access-and-call-limit` (C-22…C-25). After the merge, the user
+     sets `ADMIN_UID` (and optionally `PRACTICE_DAILY_CALL_LIMIT`) on Vercel
+     and does the manual checks listed under C-23…C-25.
   3. DC-02, TR-01, TR-02, TR-03. They need the Dograh Cloud workflows running.
   4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
 - Working today with real services: sign-in → practice setup (v1) → real
@@ -284,6 +285,111 @@ without mocks.
       `dograh-widget.js`. The marker appears only in the local Turbopack
       cache, which is never served.
   - The real call with the new variables is checked in DC-01 (I-02).
+- **C-22** ACC-01 access model and trial, server side (2026-11-13, batch 2):
+  - `lib/practice/access.ts`: `UserAccess` (ISO timestamps),
+    `parseUserAccess` (lenient, but a used trial stays used), `isAdmin`
+    (`ADMIN_UID`; unset or blank → nobody), `accessLevelOf`
+    (admin > approved > unused trial > blocked), `sessionKindFor`.
+  - `lib/practice/create-session.ts`: one transaction reads `users/{uid}` →
+    access level → 403 if blocked → validation with the kind → for a trial,
+    sets `access.trialUsed` → creates the v2 session with `kind` and
+    `userId`. Its adapter `createPracticeSession` is in `server.ts`
+    (`transaction.set` merge plus `transaction.create`).
+  - `session-setup.ts`: `validateSessionSetup` / `validatePracticeSetupRequest`
+    take `{kind}`. A trial ignores the body's duration and stores 1.
+  - `session.ts`: the DTO has `kind`. A v2 document without `kind` is full.
+    A trial must be 1 minute, and a full session cannot be.
+  - `POST /api/practice-setup` is now thin: 201 / 400 / 403
+    `access_required` + `accessStatus` / 500.
+  - The UI is unchanged until ACC-02. A trial account still sees the
+    duration pills, but its session is stored as 1 minute.
+  - Verify: `tests/access.test.mjs` (10 tests: parsing, admin, level matrix,
+    one trial then 403 with no write, 3 concurrent setups → 1 session,
+    invalid input keeps the trial, approved/admin full, pending/rejected
+    blocked, storage failure, strict trial/full parsing); route and creation
+    tests in `tests/api.test.mjs`; `npm test` 78/78; strip-types 5/5;
+    typegen + `tsc`; build; lint shows only the N-02c baseline.
+- **C-23** ACC-02 learner side (2026-11-13, batch 2):
+  - `access.ts`: `AccessView`, `accessViewOf`, `canRequestAccess`,
+    `requestAccess` (none / rejected → pending; message trimmed, ≤ 300,
+    non-string → invalid; pending → `already_pending`; approved or admin →
+    `already_approved`), and `formatAccessDate` (Vietnam time).
+  - `access-server.ts`: `getAccessView` (a read failure falls back to the
+    initial view) and `requestUserAccess` (one transaction, `set` with merge).
+  - `POST /api/access-request`: 200 / 400 / 409 `reason` / 500.
+  - `/` loads the profile and the access view in parallel.
+    `HomePracticeSetup` takes `initialAccess` and validates with `{kind}`.
+    A trial hides the duration and says "Start 1-minute trial". A blocked
+    account gets a disabled "Full access needed". A 403 switches the view to
+    blocked.
+  - New `AccessBanner` (UI in `ui-context.md` → Home access).
+  - The smoke script also checks that `POST /api/access-request` answers 401.
+  - Verify: `tests/access.test.mjs` +3 (request transitions, refusals and
+    message rules, view and Vietnam-time date); `tests/api.test.mjs` +1
+    (route mapping); `npm test` 82/82; typegen + `tsc`; build; lint shows
+    only the N-02c baseline.
+  - **Manual check pending (user, after deploy):** a new account sees the
+    trial banner, makes a 1-minute call that is reviewed, then sends a
+    request and sees "pending".
+- **C-24** ACC-03 admin side (2026-11-13, batch 2):
+  - `access.ts`: `decideAccess` and `isUserId`:
+    - approve: pending → approved; reject: pending → rejected; revoke:
+      approved → rejected;
+    - an identical repeat is a no-op; anything else → `invalid_transition`;
+    - the admin's own account → `invalid_transition`;
+    - a missing user → `not_found`;
+    - a non-admin → `not_admin`, before any read.
+
+    It also has `toAccessAccountRow` and `accessAccountLists` (pending oldest
+    first, approved newest first, the admin and malformed rows left out).
+  - `access-server.ts`: `isAdminUser`, `decideUserAccess`,
+    `listAccessAccounts` (single-field `access.status` queries, no composite
+    index) and `countPendingRequests` (`count()`).
+  - `POST /api/admin/access/[uid]`: 404 for anyone but the admin, before the
+    body is read; 200 / 400 / 404 `not_found` / 409 `invalid_transition` /
+    500.
+  - `/admin` (`notFound()` for non-admins) with `AdminAccessPanel`. The
+    `(root)` layout passes the admin flag and the pending count to
+    `AppHeader` (link plus badge, admin only).
+  - The smoke script also checks that `/admin` redirects anonymous users and
+    that the admin route answers 404.
+  - Verify: `tests/access.test.mjs` +4 (transitions and no-op repeats,
+    refused transitions without a write, admin-only and input checks before
+    any read, lists); `tests/api.test.mjs` +1 (404 before the body,
+    mapping); `npm test` 87/87; typegen + `tsc`; build (`/admin`,
+    `/api/admin/access/[uid]`); lint shows only the N-02c baseline;
+    `npm run test:smoke` **13/13** against `next start -p 3100`.
+  - **Manual check pending (user, after deploy):** set `ADMIN_UID` on
+    Vercel, sign in as the admin → the header link appears → approve a
+    request → that learner can choose 10/15/20 minutes; revoke → 403 again;
+    another account gets 404 on `/admin`.
+- **C-25** LIM-01 daily call limit (2026-11-13, batch 2):
+  - `lib/practice/call-quota.ts` (pure):
+    - `dailyCallLimit` (positive integer, else 5);
+    - `quotaDay` / `quotaResetsAt` (Vietnam = UTC+7 with no DST, so a
+      fixed offset);
+    - `parseCallQuota`, `callsUsedToday`, `callQuotaView`, `consumeCall`.
+  - `createPracticeSessionForUser`: for approved, non-admin accounts,
+    `consumeCall` runs after validation, in the same transaction. Over the
+    limit → `call_limit_reached` with no write. The store gets
+    `dailyCallLimit` and `now`.
+  - The route answers 429 `{reason, limit, resetsAt}`.
+  - `AccessView.quota` (full accounts only) comes from `getAccessView`.
+  - Home: a "Calls left today" row; at 0, a disabled "Daily limit reached"
+    and the reopening date; a 429 sets the count to 0.
+  - `.env.example` and the README list `PRACTICE_DAILY_CALL_LIMIT`.
+  - Verify:
+    - `tests/call-quota.test.mjs` (4: env parsing, the Vietnam midnight
+      boundary and year rollover, stale or malformed quotas, consume);
+    - `tests/access.test.mjs` +5 (the 6th call → 429 with no write; reset at
+      17:00Z; 8 concurrent requests → exactly 5 sessions; invalid input
+      uses no call; trial and admin have no quota; view);
+    - `tests/api.test.mjs` +1 (429 body);
+    - `npm test` 97/97; strip-types 5/5; typegen + `tsc`; build; smoke
+      13/13 locally; lint shows only the N-02c baseline.
+  - **Manual check pending (user, after deploy):** with a temporary
+    `PRACTICE_DAILY_CALL_LIMIT=1` on Vercel, an approved learner creates
+    one session, then sees "Daily limit reached".
 
 ## In Progress
 
@@ -345,10 +451,6 @@ Rules for every unit:
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **ACC-01** | Access model and trial, server side (`api-contracts.md` → Access and trial). The workflow-spec guidance for a 1-minute session is done earlier, with DC-01 in batch 1. Code: `lib/practice/access.ts` (pure rules, `isAdmin`), `access-server.ts`; `users/{uid}.access`; session `kind` and the 1-minute trial in the `practice-setup` transaction; 403 `access_required`; v2 parser reads `kind` (missing → `full`) and `durationMinutes: 1` only for trial; `ADMIN_UID` in `.env.example` and on Vercel | DC-01 | Tests: first setup → trial session, `trialUsed` set; second → 403 with no write; approved → full; admin → full; concurrent trial setups create one session; `kind` in the body ignored; old v2 sessions still parse |
-| **ACC-02** | Learner side: `POST /api/access-request`; access banner on `/` (trial available, trial used, pending, rejected, approved); trial form without the duration choice; 403 handling | ACC-01 | Route tests (401/400/409/200, `none`/`rejected` → `pending`); on the deployment, a new account sees the trial, makes a 1-minute call that gets reviewed, then sends a request |
-| **ACC-03** | Admin side: `/admin` page (pending and approved lists), `POST /api/admin/access/[uid]` (approve/reject/revoke), header link with the pending count, admin-only | ACC-02 | Tests: non-admin → 404 on the page and the route; each transition and invalid one (409); a decision about `ADMIN_UID` → 409. On the deployment: approve → the learner creates a full session; revoke → 403 again |
-| **LIM-01** | Daily call limit for approved learners (`api-contracts.md` → Daily call limit). Pure rules in `lib/practice/call-quota.ts`; `users/{uid}.callQuota` checked and incremented in the ACC-01 transaction; 429 `call_limit_reached`; calls left and reset time on `/`; admin exempt; `PRACTICE_DAILY_CALL_LIMIT` (default 5) in `.env.example` and on Vercel. Share the production URL with other people only after this unit | ACC-03 | Tests: under the limit → session created and `used` + 1; at the limit → 429 with no session and no write; a new day resets; concurrent requests never pass the limit; invalid env → default. On the deployment, the limit is reached and the form shows it |
 | **DC-02** | Delete the retired self-hosted stack (confirmed 2026-11-13): `dograh/docker-compose.yml`, `dograh/.env.example`, `backup.ps1` / `restore.ps1`, the `dograh:up|down|logs|backup` scripts, the `local` transcript mode and its variables; update README, tests and context | DC-01 | `npm test`, build and lint pass; no `localhost:8020`, `fluentai-dograh` or `DOGRAH_TRANSCRIPT_MODE` left in code or docs |
 | **TR-01** | Webhook v2: Bearer auth, flat payload, `""` means absent, lookup by `session_id`, run cross-check, idempotent transaction; remove `getDograhRun` / `DOGRAH_WORKFLOW_ID` (fixes N-01a,c,d,e). Then enable the Webhook node in both Cloud workflows | DC-01 | Wrong Bearer → 401; redelivery is a no-op; an old session with the same run ID is untouched; on the deployment, a real Cloud delivery is linked by `session_id` |
 | **TR-02** | Download reason codes (`transcriptError`); 503 for transient failures until the final attempt; public mode follows ≤ 3 redirects, each hop validated against the allowlist (fixes N-01b, N-01f) | TR-01 | Tests per reason code and per redirect case (allowed, off-list, too many hops); on the deployment, a real Cloud transcript reaches `ready` |

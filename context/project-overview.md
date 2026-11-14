@@ -45,7 +45,7 @@ part of the target since 2026-11-13.
    public HTTPS deployment on Vercel. **[planned DEP-01, DC-01]**
 6. Call cost stays bounded. An account that the admin has not approved gets
    one 1-minute trial call. Approved accounts get a daily number of calls.
-   **[planned ACC-01…ACC-03, LIM-01]**
+   **[done ACC-01…ACC-03, LIM-01 in code; checked on the deployment after merge]**
 
 ## Core User Flow
 
@@ -183,7 +183,7 @@ part of the target since 2026-11-13.
 - Accounts that existed before ACC-01 start in the trial state, with the
   trial unused. Their old sessions stay readable.
 
-### Call limit **[planned LIM-01]**
+### Call limit **[done LIM-01]**
 
 - Registration stays open. To control cost, each **approved** learner can
   start a limited number of full calls per day (`PRACTICE_DAILY_CALL_LIMIT`,

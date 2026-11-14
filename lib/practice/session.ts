@@ -12,7 +12,9 @@ export type {
 import { validateLearnerProfile } from "./profile.ts";
 import type { CefrLevel, LearnerProfile, SessionProfile } from "./profile.ts";
 import { validateSessionSetup } from "./session-setup.ts";
-import type { SessionDuration, SessionSetup, StoredSessionSetup } from "./session-setup.ts";
+import type { SessionSetup, StoredSessionSetup } from "./session-setup.ts";
+import { TRIAL_DURATION_MINUTES, sessionKinds } from "./access.ts";
+import type { SessionKind } from "./access.ts";
 
 export const callStatuses = ["ready", "connecting", "active", "completed", "failed"] as const;
 export const callEndReasons = ["user_ended", "mic_denied", "network_error", "dropped"] as const;
@@ -61,10 +63,12 @@ export type CustomTopic = { id: "custom"; name: string };
 export type PracticeSession = {
   id: string;
   schemaVersion: 1 | 2;
+  // v2 only: "trial" (1 minute, ACC-01) or "full"; v2 documents without it are full.
+  kind?: SessionKind;
   language: PracticeLanguage;
   topic: PracticeTopic | CustomTopic;
   level: PracticeLevel | CefrLevel;
-  durationMinutes: PracticeDuration | SessionDuration;
+  durationMinutes: PracticeDuration | SessionSetup["durationMinutes"];
   tutor: PracticeTutor;
   status: (typeof callStatuses)[number];
   profile?: SessionProfile;
@@ -210,14 +214,18 @@ export function createPracticeSessionDetails(setup: PracticeSetupInput): Omit<Pr
 }
 
 // v2 document fields (without userId and timestamps). Practice is always English.
-export function createPracticeSessionDocumentV2(profile: LearnerProfile, setup: SessionSetup) {
+// The kind comes from the account's access on the server (ACC-01); a trial always lasts 1 minute.
+export function createPracticeSessionDocumentV2(profile: LearnerProfile, setup: SessionSetup, kind: SessionKind = "full") {
   const { id, name, role } = practiceTutors[setup.tutorId];
-  const session: Omit<PracticeSession, "id"> & { schemaVersion: 2; profile: SessionProfile; setup: StoredSessionSetup } = {
+  const session: Omit<PracticeSession, "id"> & {
+    schemaVersion: 2; kind: SessionKind; profile: SessionProfile; setup: StoredSessionSetup;
+  } = {
     schemaVersion: 2,
+    kind,
     language: { ...practiceLanguages[creatablePracticeLanguageIds[0]] },
     topic: { id: "custom", name: setup.topic },
     level: profile.level,
-    durationMinutes: setup.durationMinutes,
+    durationMinutes: kind === "trial" ? TRIAL_DURATION_MINUTES : setup.durationMinutes,
     tutor: { id, name, role },
     status: "ready",
     profile: {
@@ -233,7 +241,7 @@ export function createPracticeSessionDocumentV2(profile: LearnerProfile, setup: 
 }
 
 type SessionDetails = Pick<PracticeSession,
-  "schemaVersion" | "language" | "topic" | "level" | "durationMinutes" | "tutor" | "profile" | "setup">;
+  "schemaVersion" | "kind" | "language" | "topic" | "level" | "durationMinutes" | "tutor" | "profile" | "setup">;
 
 // v1: catalog topic, legacy levels and durations. Stored names/roles are preserved for old sessions.
 function parseSessionDetailsV1(value: Record<string, unknown>): SessionDetails | null {
@@ -261,15 +269,20 @@ function parseSessionDetailsV2(value: Record<string, unknown>): SessionDetails |
   if (!isRecord(language) || !isKeyOf(language.id, practiceLanguages) || !isLabel(language.name) ||
     !isRecord(topic) || topic.id !== "custom" || !isRecord(tutor) || !isLabel(tutor.name) ||
     !isLabel(tutor.role) || !isRecord(profile) || !isRecord(setup)) return null;
+  // Sessions created before ACC-01 have no kind and are full. A trial must last exactly 1 minute.
+  const kind = value.kind === undefined ? "full" : value.kind;
+  if (!isOneOf(kind, sessionKinds)) return null;
+  if (kind === "trial" && value.durationMinutes !== TRIAL_DURATION_MINUTES) return null;
   const parsedProfile = validateLearnerProfile({ ...profile, level: value.level });
   const parsedSetup = validateSessionSetup({
     ...setup, topic: topic.name, durationMinutes: value.durationMinutes, tutorId: tutor.id,
-  });
+  }, "setup", { kind });
   if (!parsedProfile.ok || !parsedSetup.ok) return null;
   const p = parsedProfile.value;
   const s = parsedSetup.value;
   return {
     schemaVersion: 2,
+    kind,
     language: { id: language.id, name: language.name },
     topic: { id: "custom", name: s.topic },
     tutor: { id: s.tutorId, name: tutor.name, role: tutor.role },

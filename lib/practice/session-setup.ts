@@ -6,6 +6,8 @@ import { practiceTutors } from "./catalog.ts";
 import type { TutorId } from "./catalog.ts";
 import { validateLearnerProfile } from "./profile.ts";
 import type { LearnerProfile } from "./profile.ts";
+import { TRIAL_DURATION_MINUTES } from "./access.ts";
+import type { SessionKind, TrialDuration } from "./access.ts";
 
 export const sessionModes = ["role_play", "free_talk", "q_and_a", "debate"] as const;
 export const sessionDurations = [10, 15, 20] as const;
@@ -31,9 +33,12 @@ export type SessionSetup = {
   reviewVocabulary: string[];
   grammarFocus: string | null;
   weakPoints: string[];
-  durationMinutes: SessionDuration;
+  // 10/15/20 for a full session; always 1 for a trial session (ACC-01).
+  durationMinutes: SessionDuration | TrialDuration;
   tutorId: TutorId;
 };
+// The session kind decides the duration rule; the server derives it from the account's access, never the body.
+export type SetupOptions = { kind?: SessionKind };
 
 // The `setup` map stored on a v2 session; topic, duration and tutor live at the document's top level.
 export type StoredSessionSetup = Pick<SessionSetup,
@@ -58,8 +63,9 @@ function textError(text: string, min: number, max: number, label: string): strin
   return text.length < min || text.length > max ? `${label} must be ${min}–${max} characters.` : null;
 }
 
-export function validateSessionSetup(value: unknown, path = "setup"): Validated<SessionSetup> {
+export function validateSessionSetup(value: unknown, path = "setup", { kind = "full" }: SetupOptions = {}): Validated<SessionSetup> {
   if (!isRecord(value)) return { ok: false, fieldErrors: { [path]: "Complete the session setup." } };
+  const trial = kind === "trial";
   const fieldErrors: FieldErrors = {};
   const set = (field: string, message: string | null) => { if (message) fieldErrors[`${path}.${field}`] = message; };
   const { topic: topicLimit, scenario: scenarioLimit, vocabularyItem, targetVocabulary: targetLimit,
@@ -70,7 +76,8 @@ export function validateSessionSetup(value: unknown, path = "setup"): Validated<
   const scenario = normalizeText(value.scenario);
   set("scenario", textError(scenario, scenarioLimit.min, scenarioLimit.max, "Scenario"));
   if (!isOneOf(value.sessionMode, sessionModes)) set("sessionMode", "Choose a session mode.");
-  if (!isOneOf(value.durationMinutes, sessionDurations)) set("durationMinutes", "Choose 10, 15 or 20 minutes.");
+  // A trial always lasts 1 minute, so its body's duration is ignored.
+  if (!trial && !isOneOf(value.durationMinutes, sessionDurations)) set("durationMinutes", "Choose 10, 15 or 20 minutes.");
   if (!isKeyOf(value.tutorId, practiceTutors)) set("tutorId", "Choose a tutor.");
 
   const targetVocabulary = normalizeList(value.targetVocabulary);
@@ -115,17 +122,17 @@ export function validateSessionSetup(value: unknown, path = "setup"): Validated<
       reviewVocabulary,
       grammarFocus: grammarText || null,
       weakPoints,
-      durationMinutes: value.durationMinutes as SessionDuration,
+      durationMinutes: trial ? TRIAL_DURATION_MINUTES : value.durationMinutes as SessionDuration,
       tutorId: value.tutorId as TutorId,
     },
   };
 }
 
 // Body of POST /api/practice-setup (v2): the session's profile snapshot plus its setup.
-export function validatePracticeSetupRequest(value: unknown): Validated<PracticeSetupRequest> {
+export function validatePracticeSetupRequest(value: unknown, options: SetupOptions = {}): Validated<PracticeSetupRequest> {
   if (!isRecord(value)) return { ok: false, fieldErrors: { request: "Complete your profile and session setup." } };
   const profile = validateLearnerProfile(value.profile, "profile");
-  const setup = validateSessionSetup(value.setup, "setup");
+  const setup = validateSessionSetup(value.setup, "setup", options);
   if (!profile.ok || !setup.ok) {
     return { ok: false, fieldErrors: { ...(profile.ok ? {} : profile.fieldErrors), ...(setup.ok ? {} : setup.fieldErrors) } };
   }

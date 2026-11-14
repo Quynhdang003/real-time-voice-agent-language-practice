@@ -113,6 +113,45 @@ instead of hex values.
     - duration pills 10/15/20
   - Reuse the existing selected/unselected pill and button styles. Field errors
     sit under the field (`text-xs text-red-600`, `aria-describedby`).
+- Home access (ACC-02, `components/fluent/access-banner.tsx`):
+  - The banner sits between the welcome header and "Start a new practice".
+    It is hidden for full and admin accounts.
+  - Trial: `border-indigo-100 bg-app-primary-light` with a `Sparkles` icon.
+    Blocked (trial used): `border-amber-200 bg-amber-50` with a
+    `TriangleAlert` icon.
+  - It shows the pending date (indigo, `Clock`) or the decline date (red-700).
+  - The request form has an optional message textarea (counter /300) and a
+    primary **Request full access** button. Results show as a
+    `role="status"` / `role="alert"` line.
+  - Dates use `formatAccessDate` (en-GB, `Asia/Ho_Chi_Minh`), so the server
+    and the browser render the same text.
+  - In the Session card, a trial replaces the duration pills with a
+    "1 minute" note. The summary says "1 min (trial)" and the button "Start
+    1-minute trial".
+  - A blocked account sees a disabled **Full access needed** button with a
+    `Lock` icon.
+- Daily limit (LIM-01), approved learners only:
+  - The summary card adds a "Calls left today: N of M" row.
+  - At 0, the button becomes a disabled **Daily limit reached** with a
+    `Lock` icon. A muted `role="status"` line gives the reopening date at
+    00:00 Vietnam time.
+  - A 429 response sets the count to 0 and shows the server message as the
+    form error.
+- Admin (ACC-03):
+  - Header: for the `ADMIN_UID` account only, an **Access requests** link
+    (`ShieldCheck`, outlined `rounded-xl`) sits left of the avatar menu. It
+    has a `rounded-full bg-app-primary` count badge when requests are
+    pending. Below `sm`, the label is hidden and only the icon and badge
+    show.
+  - `/admin` (`components/fluent/admin-access-panel.tsx`): page header
+    (eyebrow "Admin", title "Access requests"), then
+    `lg:grid-cols-2`: **Pending requests** and **Approved accounts** cards.
+  - Each row shows the name, email, request or approval date, a trial badge
+    (`Trial used` slate / `Trial not used` indigo) and the quoted message.
+  - Row actions are `h-10 rounded-xl` buttons: Approve (primary), Reject and
+    Revoke (red outline). Revoke asks for `window.confirm`.
+  - One decision at a time. Then `router.refresh()` updates the lists and
+    the header badge. Errors show under the row (`role="alert"`).
 - Review (planned RV-02):
   - a hero with the overall feedback
   - **Session goals**: a vocabulary table with status badges `used_correctly`
