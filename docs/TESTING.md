@@ -55,7 +55,8 @@ Nếu không đặt biến này, script tìm Playwright từ thư mục dự án
 | `dograh-transcript.test.mjs` | Chặn quá dung lượng theo cả header và stream (`too_large`); UTF-8 nhiều chunk đúng; UTF-8 lỗi hoặc bị cắt → `invalid_utf8`; parser nhận assistant/user, CRLF, Unicode và dòng tiếp nối |
 | `dograh-webhook.test.mjs` (TR-01) | Payload phẳng v2, `""` = không gửi; session_id/run ID/URL sai bị từ chối; liên kết theo `session_id` → ready/empty/error, giữ field cuộc gọi; không có transcript_url → empty; session lạ, run khác, dữ liệu hỏng → skipped, không tải/ghi; phiên cũ trùng run ID không bị đụng; lưu run ID khi `connected` thất bại; gửi lại là no-op; giao song song thắng; lỗi Firestore → unavailable; adapter Firebase hai transaction, field `dograh.*` lồng nhau; (TR-02) header attempt; lỗi tạm thời ở lần 1–4 → `retry` không ghi, lần 5/thiếu header → lưu `error` + mã; lỗi vĩnh viễn lưu ngay và báo host bị chặn; thành công sau đó xoá mã lỗi; allowlist mặc định/biến môi trường; (TR-03) transcript ready → `reviewStatus: pending` một lần, review đã hoàn tất không bị xếp lại |
 | `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại; (TR-03) `pending` được claim; lease 3 phút (2:59 còn hiệu lực, 3:00 bị lấy lại, claim cũ không có thời gian coi như hết hạn); kết quả của claim đã bị lấy lại bị bỏ; review nền không cần user, cùng claim, không chạy lại review đã xong |
-| `review.test.mjs` | Gemini adapter xác thực JSON/schema/điểm và ánh xạ lỗi quota; lỗi ghi completion không trả thành công |
+| `review.test.mjs` | (RV-01) ngữ cảnh review mang mục tiêu buổi học (phiên v1 không có); transcript chỉ có lượt tutor → `transcript_empty`; adapter Gemini chỉ lưu review v2 qua validator (bằng chứng bịa, thiếu từ, review v1, JSON hỏng → `invalid_output`), ánh xạ lỗi quota; prompt injection: transcript nằm trong khối dữ liệu, `</transcript>` của học viên bị vô hiệu; cắt transcript theo lượt; lỗi ghi completion không trả thành công |
+| `review-v2.test.mjs` (RV-01) | Review v2 hợp lệ; so khớp trích dẫn (hoa/thường, dấu câu, nháy, cả từ); bằng chứng bịa ở mọi trường; mỗi từ/weak point đúng một lần; luật trạng thái; grammar focus; hình dạng và giới hạn; đọc review v1 và v2 đã lưu; neo CEFR |
 | `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/503/500, header attempt, review chỉ chạy qua `after()` sau khi trả lời; `maxDuration = 60` ở webhook và generate-review |
 | `firebase-runtime.test.mjs` | Import Firebase Auth và lấy signing key từ RSA JWK thật mà không cần mạng, khi synchronous require(ESM) bị tắt |
 | `session-pipeline.test.mjs` | Nối logic thật từ session → call → webhook v2 (redirect tới storage) → review nền → trang review lấy review đã lưu → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
@@ -136,3 +137,14 @@ khi gửi request).
 cùng các test của nó. FluentAI dùng Dograh Cloud; chính sách tải transcript chỉ còn
 HTTPS tới host trong `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`. TR-02 thêm việc đi theo
 redirect đã kiểm tra cho chính sách này.
+
+## Bổ sung: review v2 với Gemini thật — 14/11/2026 (RV-01)
+
+- Một lần gọi `gemini-3.5-flash-lite` thật với transcript **tổng hợp** trong
+  `tests/helpers/fixtures.mjs` (phỏng vấn xin việc, B1, grammar focus "Past simple");
+  không có dữ liệu người dùng. Kết quả `ok` sau 4,4 giây và qua validator đầy đủ:
+  8/8 từ mục tiêu được chấm, weak point `still_present`, 4 kỹ năng có điểm,
+  nhận xét có cả tiếng Anh và tiếng Việt.
+- Lần đầu API trả 400 `INVALID_ARGUMENT`; thử từng phần schema cho thấy nguyên nhân
+  là `minItems`/`maxItems`. Schema đã bỏ hai trường này, validator vẫn kiểm số lượng.
+- Chưa kiểm chứng với transcript của cuộc gọi Dograh thật (E2E-01).

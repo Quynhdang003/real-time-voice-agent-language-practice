@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AudioLines, BookOpenText, Braces, Mic2, ScrollText, Sparkles } from "lucide-react";
+import { isReviewV2 } from "@/lib/practice/session";
 import type { PracticeSession, SessionReview } from "@/lib/practice/session";
 
 const metricIcons = { fluency: AudioLines, grammar: Braces, vocabulary: BookOpenText } as const;
@@ -82,7 +83,9 @@ export function ReviewPanel({ session }: { session: PracticeSession }) {
     : reviewPhase === "failed" ? errorMessage
     : null;
 
-  const review: SessionReview | undefined = reviewPhase === "done" ? session.review : undefined;
+  // Review v2 gets its own view in RV-02; until then only a v1 review is rendered here.
+  const review: SessionReview | undefined =
+    reviewPhase === "done" && session.review && !isReviewV2(session.review) ? session.review : undefined;
 
   const transcriptMessage =
     transcriptStatus === undefined ? "Your transcript is on its way — this page updates automatically."

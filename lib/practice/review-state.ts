@@ -1,9 +1,10 @@
 import { isOwnedSession } from "./read-session";
 import { isPracticeSessionId, isRecord, parsePracticeSession } from "./session";
-import type { SessionReview, TranscriptTurn } from "./session";
+import type { PracticeSession, StoredReview, TranscriptTurn } from "./session";
+import type { SessionReviewV2 } from "./review-v2";
 
 export type ReviewOutcome =
-  | { status: "ok"; review: SessionReview }
+  | { status: "ok"; review: StoredReview }
   | { status: "unauthenticated" | "invalid_id" | "not_found" | "invalid_data"
       | "not_ready" | "transcript_pending" | "transcript_empty" | "transcript_error"
       | "already_processing" | "quota" | "invalid_output" | "unavailable" };
@@ -12,7 +13,30 @@ export type ReviewOutcome =
 // (Vercel stops a function at its maxDuration of 60 s) or crashed before writing a result.
 export const REVIEW_LEASE_MS = 3 * 60 * 1000;
 
-type ReviewContext = { language: string; topic: string; level: string };
+// What Gemini needs besides the transcript (RV-01). A v1 session has no setup, so its goals are empty.
+export type ReviewContext = {
+  level: string;
+  topic: string;
+  scenario: string | null;
+  sessionMode: string | null;
+  goals: { targetVocabulary: string[]; reviewVocabulary: string[]; grammarFocus: string | null; weakPoints: string[] };
+};
+
+export function reviewContextOf(session: PracticeSession): ReviewContext {
+  const setup = session.setup;
+  return {
+    level: session.level,
+    topic: session.topic.name,
+    scenario: setup?.scenario ?? null,
+    sessionMode: setup?.sessionMode ?? null,
+    goals: {
+      targetVocabulary: setup?.targetVocabulary ?? [],
+      reviewVocabulary: setup?.reviewVocabulary ?? [],
+      grammarFocus: setup?.grammarFocus ?? null,
+      weakPoints: setup?.weakPoints ?? [],
+    },
+  };
+}
 type Claim =
   | { proceed: true; transcript: TranscriptTurn[]; context: ReviewContext; claimedAt: string }
   | { proceed: false; outcome: ReviewOutcome };
@@ -21,10 +45,10 @@ type ReviewTransaction = { readDocument: () => Promise<unknown>; markProcessing:
 export type ReviewStore = {
   transaction: (sessionId: string, apply: (transaction: ReviewTransaction) => Promise<Claim>) => Promise<Claim>;
   generate: (transcript: TranscriptTurn[], context: ReviewContext) => Promise<
-    { status: "ok"; review: SessionReview } | { status: "quota" | "invalid_output" | "unavailable" }>;
+    { status: "ok"; review: SessionReviewV2 } | { status: "quota" | "invalid_output" | "unavailable" }>;
   // Each write runs only while the session still holds this claim (reviewStatus "processing" with the
   // same reviewClaimedAt), and resolves false when the claim was taken over.
-  writeCompleted: (sessionId: string, review: SessionReview, claimedAt: string) => Promise<boolean>;
+  writeCompleted: (sessionId: string, review: SessionReviewV2, claimedAt: string) => Promise<boolean>;
   writeFailed: (sessionId: string, claimedAt: string) => Promise<boolean>;
   now: () => string;
   onError: (error: unknown) => void;
@@ -61,10 +85,13 @@ async function runReview(sessionId: string, owner: string | null, store: ReviewS
       if (transcriptStatus !== "ready" || !session.dograh?.transcript?.length) {
         return { proceed: false, outcome: { status: "transcript_pending" } };
       }
+      // Only learner turns are assessed; a call where the learner never spoke has nothing to review.
+      if (!session.dograh.transcript.some((turn) => turn.role === "learner")) {
+        return { proceed: false, outcome: { status: "transcript_empty" } };
+      }
 
       await transaction.markProcessing(now);
-      return { proceed: true, transcript: session.dograh.transcript, claimedAt: now,
-        context: { language: session.language.name, topic: session.topic.name, level: session.level } };
+      return { proceed: true, transcript: session.dograh.transcript, claimedAt: now, context: reviewContextOf(session) };
     });
     if (!claim.proceed) return claim.outcome;
 

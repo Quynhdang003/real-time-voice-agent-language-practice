@@ -15,6 +15,8 @@ import { validateSessionSetup } from "./session-setup.ts";
 import type { SessionSetup, StoredSessionSetup } from "./session-setup.ts";
 import { TRIAL_DURATION_MINUTES, sessionKinds } from "./access.ts";
 import type { SessionKind } from "./access.ts";
+import { parseSessionReviewV2 } from "./review-v2.ts";
+import type { SessionReviewV2 } from "./review-v2.ts";
 
 export const callStatuses = ["ready", "connecting", "active", "completed", "failed"] as const;
 export const callEndReasons = ["user_ended", "mic_denied", "network_error", "dropped"] as const;
@@ -53,6 +55,7 @@ export type ReviewStatus = (typeof reviewStatuses)[number];
 export type TranscriptTurn = { role: "tutor" | "learner"; text: string; at: string };
 export type ReviewCorrection = { original: string; corrected: string; explanation: string };
 export type ReviewVocabularyItem = { word: string; definition: string };
+// Review v1 (0–100 metrics): still read for reviews generated before RV-01; new reviews are v2.
 export type SessionReview = {
   overallScore: number;
   metrics: { fluency: number; grammar: number; vocabulary: number };
@@ -61,6 +64,11 @@ export type SessionReview = {
   vocabulary: ReviewVocabularyItem[];
   tutorFeedback: string;
 };
+
+export type StoredReview = SessionReview | SessionReviewV2;
+export function isReviewV2(review: StoredReview): review is SessionReviewV2 {
+  return "schemaVersion" in review && review.schemaVersion === 2;
+}
 
 export type CustomTopic = { id: "custom"; name: string };
 
@@ -80,7 +88,7 @@ export type PracticeSession = {
   profile?: SessionProfile;
   setup?: StoredSessionSetup;
   dograh?: DograhCall;
-  review?: SessionReview;
+  review?: StoredReview;
   reviewStatus?: ReviewStatus;
 };
 
@@ -325,9 +333,11 @@ export function parsePracticeSession(id: string, value: unknown): PracticeSessio
 
   const dograh = "dograh" in value ? parseDograhCall(value.dograh) : undefined;
   if (dograh === null) return null;
-  let review: SessionReview | undefined;
+  let review: StoredReview | undefined;
   if ("review" in value) {
-    const parsedReview = parseSessionReview(value.review);
+    const parsedReview = isRecord(value.review) && "schemaVersion" in value.review
+      ? parseSessionReviewV2(value.review)
+      : parseSessionReview(value.review);
     if (parsedReview === null) return null;
     review = parsedReview;
   }

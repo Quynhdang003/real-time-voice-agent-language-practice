@@ -35,7 +35,11 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - `session.ts`: types and parsers; re-exports the catalog and `isRecord`
   - `read-session.ts`
   - `call-state.ts`: call state machine
-  - `review-state.ts`: review claim and generation
+  - `review-state.ts`: review claim and generation (`reviewContextOf` builds
+    the session goals for the prompt)
+  - **[done RV-01]** `review-v2.ts`: review v2 types, `parseSessionReviewV2`
+    (shape, and with expectations the full validator), `quoteKey` /
+    `isLearnerQuote`, `nextCefrLevel`
   - `server.ts`: Firestore adapters
   - `dograh-context.ts`: widget context builder (SET-05)
   - **[done LIM-01]** `call-quota.ts`: pure daily-limit rules (day key in
@@ -232,8 +236,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     `reviewClaimedAt` (ISO string, top level) is the lease of a `processing`
     claim; it is removed with the result. `parsePracticeSession` does not
     expose it.
-  - **[planned RV-01]** `review` v2 (`schemaVersion: 2`); see
-    `api-contracts.md` → Target contracts.
+  - **[done RV-01]** `review` v2 (`schemaVersion: 2`); see
+    `api-contracts.md` → Review v2. Reviews written before RV-01 stay v1
+    and are still read.
   - Optional fields left empty are stored as `null` or `[]`, never `"none"`.
   - Parsers read v1 and v2. New writes are v2 only.
 - **Firebase Storage**: `profile-photos/{uid}/avatar.{jpg|png}`.
@@ -377,7 +382,8 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
     nothing. It answers within Dograh's 30 s timeout (≤ 15 s download plus
     Firestore).
     Review generation never runs inside the webhook response.
-12. **[planned RV-01]** A review is stored only if it passes the v2 validator:
+12. **[done RV-01]** A review is stored only if it passes the v2 validator
+    (`parseSessionReviewV2` with the session's expectations):
     - every listed word or weak point is judged exactly once;
     - every evidence quote is found in a learner turn;
     - scores are integers 1–5.

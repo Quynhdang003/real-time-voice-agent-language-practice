@@ -212,7 +212,7 @@ part of the target since 2026-11-13.
   linked by `session_id` and idempotent. Transient download failures are
   retried by Dograh, and the review runs in the background. Real Cloud
   deliveries are still to be checked on the deployment.
-- **[planned RV-01]** Review v2:
+- **[done RV-01]** Review v2:
   - **Session goals:** each target/review word is `used_correctly`,
     `used_incorrectly` or `not_used`, with evidence and a correction. Grammar
     focus has correct/incorrect counts with examples. Weak points are marked

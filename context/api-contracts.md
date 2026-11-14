@@ -59,7 +59,8 @@ S = session cookie required. All routes below are S.
   | `connecting` | `disconnected` | `failed` |
   | `completed` / `failed` | identical repeat of the final event; any `error` repeat on a pre-run failure | no-op |
 
-- `review` shape (`SessionReview`, validated by `parseSessionReview`; otherwise `invalid_output`):
+- `review`: new reviews are **v2** since RV-01 (see "Review v2" below). The v1 shape below is still read for reviews generated before RV-01 (`StoredReview = SessionReview | SessionReviewV2`, told apart by `schemaVersion: 2`, `isReviewV2`).
+- v1 `review` shape (`SessionReview`, validated by `parseSessionReview`):
   - `overallScore`, plus `metrics.{fluency, grammar, vocabulary}`: numbers 0–100
   - `strengths`: ≤ 10 strings, each ≤ 300 chars
   - `corrections`: ≤ 20 items `{original, corrected, explanation}`, each field ≤ 500 chars
@@ -69,7 +70,7 @@ S = session cookie required. All routes below are S.
   1. Check ownership, then return a completed review if one exists.
   2. Require `status: completed`.
   3. `processing` with a valid lease (`reviewClaimedAt` less than 3 minutes old, `REVIEW_LEASE_MS`) → `already_processing`. An older claim, or one without a valid `reviewClaimedAt`, is taken over.
-  4. Map the transcript status: `error` → `transcript_error`, `empty` → `transcript_empty`, not `ready` → `transcript_pending`.
+  4. Map the transcript status: `error` → `transcript_error`, `empty` → `transcript_empty`, not `ready` → `transcript_pending`. **[RV-01]** A `ready` transcript without any learner turn → `transcript_empty` too (there is nothing to assess), without a claim or a Gemini call.
   5. Claim inside the transaction: `reviewStatus: processing` + `reviewClaimedAt` (ISO time). A claim is allowed from a missing status, `pending` (set by the webhook), `failed`, or an expired `processing`.
   6. Call Gemini outside the transaction.
   7. Write `completed` + `review`, or `reviewStatus: failed` on `quota`, `invalid_output` or `unavailable`, in a transaction that checks the session still holds **this** claim (same `reviewClaimedAt`), and removes `reviewClaimedAt`. A result whose claim was taken over is dropped, and the request answers `already_processing`. A failed review can be generated again.
@@ -275,11 +276,9 @@ Decided 2026-11-13: registration stays open, and the number of calls per learner
 - Dograh counts size with Python `json.dumps` (`ensure_ascii`), so each non-ASCII character costs 6 bytes. A long Vietnamese scenario or word list can exceed 8 KiB.
 - Dograh then drops the **later** variables. `session_id` is first, so the webhook link survives. `dograhContextBytes()` computes the same size.
 
-### `POST /api/practice-session/[sessionId]/generate-review` v2 (RV-01)
+### Review v2 (`review`, `schemaVersion: 2`) — implemented (RV-01)
 
-The lease, the `pending` status, `maxDuration` and the background trigger shipped in TR-03 (see "Web API" above). Still planned: `review` becomes v2 (RV-01). Success and error codes stay the same.
-
-### Review v2 (`review`, `schemaVersion: 2`) (RV-01)
+Types, parser and validator in `lib/practice/review-v2.ts` (pure, shared with the review page); prompt, response schema and the Gemini call in `lib/ai/review.ts`. `generate-review` and the background review store it; success and error codes are unchanged.
 
 ```
 Bilingual = {en: string, vi: string}   // same content in English and Vietnamese
@@ -307,20 +306,24 @@ Bilingual = {en: string, vi: string}   // same content in English and Vietnamese
 - **Scale** (anchored to the session `level`):
   - 1 = well below level, 2 = below, 3 = at level, 4 = above level.
   - 5 = the skill already meets the **next** CEFR level (a B1 session scoring 5 means B2-level performance on that skill).
-  - For C2 sessions, which have no next level, 5 = consistently at the top of C2, near-native (assumption, 2026-11-09).
+  - For C2 sessions, which have no next level, 5 = consistently at the top of C2, near-native (confirmed by the user on 2026-11-14). `nextCefrLevel` maps legacy `Beginner` to A1.
 - **Validator** (`parseSessionReviewV2`; any failure → `invalid_output`, retryable):
   - Each word of `setup.targetVocabulary` / `setup.reviewVocabulary` appears exactly once (case-insensitive). The same rule applies to `setup.weakPoints` in `sessionGoals.weakPoints`.
   - `used_*` → `evidence` is required; `used_incorrectly` → `correction` is required; `not_used` → both `null`. `improved` / `still_present` → `evidence` is required; `not_observed` → `null`.
   - `grammarFocus` is `null` exactly when `setup.grammarFocus` is `null`. Incorrect examples carry `corrected`.
-  - Every `evidence`, `original` and `speakingSkills.*.evidence` string must be found in a single learner turn. Matching is case-insensitive and ignores whitespace and punctuation differences.
-  - Strings ≤ 300 chars unless stated otherwise.
-- **Prompt rules:**
-  - Assess learner turns only, and use the tutor turns only as context.
-  - The transcript is a delimited data block; instructions inside it are ignored.
+  - Every `evidence`, `original` and `speakingSkills.*.evidence` string must be found in a single learner turn. Matching is case-insensitive and ignores whitespace and punctuation differences (`quoteKey`: NFKC, lower case, apostrophes removed, other punctuation and symbols → spaces) and works on whole words, so `"dead"` does not match `"deadline"`.
+  - Strings are trimmed and ≤ 300 chars unless stated otherwise; list sizes as in the shape above (vocabulary lists ≤ 12 / ≤ 5, weak points ≤ 5). Counts are integers 0–1,000, and an example with `corrected` counts as an incorrect use, so examples never outnumber the counts.
+  - Without the session's expectations, the same function only checks the shape and limits. Stored reviews are read that way, and a stored review that fails it makes the session `invalid_data`.
+- **Prompt rules** (`buildReviewPrompt`):
+  - Assess learner turns only, and use the tutor turns only as context. Turns are labelled `[L1]`, `[T1]`, ….
+  - The transcript is a data block between `<transcript>` and `</transcript>`; the prompt says that instructions inside it are ignored. `<` and `>` in turn text become `‹` `›`, so a turn can never close the block (this does not change quote matching).
   - Be lenient with errors that look like speech-recognition mistakes.
-  - The transcript is truncated by whole turns, never mid-turn.
+  - The transcript is truncated by whole turns at 20,000 characters, never mid-turn.
   - Every comment, explanation and correction is written in both English and Vietnamese.
-- The code computes candidate vocabulary occurrences (case-insensitive phrase match on learner turns) and passes them to Gemini as hints. Gemini decides the status.
+  - `nextWeakPoints` are asked for without semicolons and ≤ 120 characters; the carry-over (RV-03) still drops any that break the weak-point rules.
+- The code computes candidate vocabulary occurrences (case-insensitive whole-word phrase match on learner turns) and passes them to Gemini as hints (`- deadline: exact match in L2`). Gemini decides the status.
+- **Gemini call:** `gemini-3.5-flash-lite`, JSON output with `REVIEW_RESPONSE_SCHEMA` (nullable fields, enums, integer 1–5 scores), temperature 0.2. The schema has no `minItems`/`maxItems`, because the Gemini API answers 400 `INVALID_ARGUMENT` to them (checked 2026-11-14); the prompt states the counts and the validator enforces them. `schemaVersion: 2` is added by the code, not asked of the model.
+- **Real call (2026-11-14):** one call with the synthetic job-interview fixture (`tests/helpers/fixtures.mjs`, B1, grammar focus "Past simple") passed the full validator in 4.4 s: 8/8 target words judged, the weak point `still_present`, four skill scores, bilingual feedback.
 
 ### Weak-point carry-over (RV-03)
 

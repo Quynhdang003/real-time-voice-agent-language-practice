@@ -41,7 +41,7 @@ test("session → call → webhook → background review → owned read (in-memo
     transaction: async (_id, apply) => apply({ readDocument: async () => doc,
       markProcessing: async (claimedAt) => { doc = { ...doc, reviewStatus: "processing", reviewClaimedAt: claimedAt }; } }),
     generate: async (transcript, context) => {
-      assert.equal(transcript[0].text, "I go yesterday"); assert.equal(context.language, "English");
+      assert.equal(transcript[0].text, "I go yesterday"); assert.deepEqual(context.goals.targetVocabulary, [], "a v1 session has no goals");
       return { status: "ok", review };
     },
     writeCompleted: async (_id, value, claimedAt) => {

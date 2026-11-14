@@ -44,7 +44,9 @@ change.
      the user does I-04 on the deployment (Dograh Cloud credential and
      webhook node, the storage host in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`, a
      real call that ends with a review).
-  4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
+  4. RV-01, RV-02, RV-03, DATA-01, on branch `feat/rv-review-v2` (started
+     2026-11-14, questions answered the same day). RV-01 = C-30. E2E-01
+     follows on the deployment.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
   instances that are gone now.
@@ -526,6 +528,38 @@ without mocks.
   - Fixes N-03a.
   - Known gap (Open Question 11): if the browser never reports the end of
     the call, the session stays `active` and no review is made.
+- **C-30** RV-01 review v2 schema, prompt and validator (2026-11-14,
+  batch 4):
+  - `lib/practice/review-v2.ts` (pure): types, `parseSessionReviewV2` (shape
+    and limits; with the session's expectations, the full validator: each
+    goal judged once case-insensitively, status rules, grammar focus null
+    exactly when unset, every quote from one learner turn on whole words),
+    `quoteKey`, `isLearnerQuote`, `nextCefrLevel`.
+  - `session.ts`: `review` is `StoredReview` (v1 or v2, told apart by
+    `schemaVersion`), `isReviewV2`. Stored reviews are checked for shape.
+  - `review-state.ts`: `reviewContextOf` (level, topic, scenario, mode and
+    goals; a v1 session has empty goals). A `ready` transcript without
+    learner turns → `transcript_empty`, without a claim.
+  - `lib/ai/review.ts`: `buildReviewPrompt` (labelled turns, a
+    `<transcript>` data block whose angle brackets cannot be closed by a
+    turn, whole-turn truncation at 20,000 chars, vocabulary hints, the CEFR
+    scale with the C2 rule, bilingual output) and `REVIEW_RESPONSE_SCHEMA`.
+    The output is validated before it is stored.
+  - The Gemini API answered 400 `INVALID_ARGUMENT` to `minItems` /
+    `maxItems` in the response schema (found by bisecting on 2026-11-14), so
+    the schema leaves them out and the validator enforces the counts.
+  - The current review page shows only v1 reviews until RV-02.
+  - Verify: new `tests/review-v2.test.mjs` (9: valid review, quote
+    matching, fabricated evidence in every field, missing / extra /
+    duplicate goals, status rules, grammar focus, shape and limits, stored
+    v1 + v2 reads, CEFR anchors); `tests/review.test.mjs` (context, adapter
+    stores only validated v2 and maps errors, prompt injection, whole-turn
+    truncation, tutor-only transcript); fixtures `reviewV2` /
+    `transcriptV2`. `npm test` 121/121; strip-types 5/5; `tsc`; build; lint
+    shows only the N-02c baseline.
+  - **One real Gemini call** (2026-11-14, synthetic fixture, no user data):
+    `ok` in 4.4 s, passed the full validator.
+  - Fixes N-03b, N-03c, N-03d.
 
 ## In Progress
 
@@ -668,6 +702,8 @@ stated otherwise
 - **N-03** Review generation:
   - a. No lease on `processing`. **Fixed TR-03** (3-minute lease, results
     written only under the claim).
+  - **b, c, d fixed RV-01** (bilingual output, whole-turn truncation, data
+    block plus a prompt-injection test).
   - b. The prompt is fixed to "English language tutor" and English output
     (practice is now English only; the comment language is still open).
   - c. The transcript is cut at 12,000 chars, possibly mid-turn.
@@ -700,17 +736,17 @@ stated otherwise
 
 ## Open Questions
 
-1. DATA-01 ("dọn bớt"): which legacy sessions should be deleted?
-   - (a) the 17 `ready` sessions that never started a call
-   - (b) the 32 `completed` sessions without a transcript
-   - (c) both
-   - or another rule?
+1. **Resolved 2026-11-14** (DATA-01): delete both groups, v1 sessions only
+   (no `schemaVersion`): (a) `ready` sessions that never started a call and
+   (b) `completed` sessions without a transcript. A dry run lists them first;
+   deletion happens only after the user confirms that list.
 2. Confirm the proposed profile defaults in `api-contracts.md` → Field rules:
    `american`, `normal`, `gentle_recast`, `only_when_stuck`, and no default
    `level` (picked on the first session). SET-02 uses them until confirmed.
-3. Review v2 has no pronunciation criterion. Should the "Pronunciation —" card
-   be removed from the review page? Are pronunciation scoring, more tutors or
-   resuming an interrupted call in scope at all?
+3. Review v2 has no pronunciation criterion. **Resolved 2026-11-14:** the
+   "Pronunciation —" card is removed from the review page (RV-02). Still open:
+   are pronunciation scoring, more tutors or resuming an interrupted call in
+   scope at all?
 4. Is session history / a progress dashboard in scope beyond weak-point
    carry-over? If not, should the placeholder "Recent practice" section (N-05)
    be removed?
@@ -720,11 +756,10 @@ stated otherwise
 7. Should the stored `recordingUrl` and `summary` be shown to the learner?
 8. Where should the Terms of Service and Privacy Policy links (currently `#`)
    point?
-9. Should the Firestore/Storage rules and indexes (e.g. the RV-03 composite
-   index) be versioned in the repo (`firestore.indexes.json`), or kept only in
-   the Firebase console?
-10. For C2 sessions, the skill score 5 is assumed to mean "consistently at the
-    top of C2 (near-native)". Confirm or adjust.
+9. **Resolved 2026-11-14:** rules and indexes stay in the Firebase console
+   only (no `firestore.indexes.json`). The RV-03 index is a manual step.
+10. **Resolved 2026-11-14:** for C2 sessions, skill score 5 means
+    "consistently at the top of C2 (near-native)".
 11. (TR-03, 2026-11-14) A review needs `status: completed`, which only the
     browser reports. If the learner closes the tab during the call, the
     session stays `active`, so even a `ready` transcript never gets a
