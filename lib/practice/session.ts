@@ -30,6 +30,8 @@ export type DograhCall = {
   summary?: string;
   transcript?: TranscriptTurn[];
   transcriptStatus?: TranscriptStatus;
+  // Why the download failed (TR-02); only with transcriptStatus "error". Never a URL.
+  transcriptError?: TranscriptError;
 };
 
 export type PracticeSetupInput = {
@@ -41,8 +43,12 @@ export type PracticeSetupInput = {
 };
 
 export const transcriptStatuses = ["ready", "empty", "error"] as const;
+export const transcriptErrors = [
+  "untrusted_url", "redirect_rejected", "http_4xx", "http_5xx", "timeout", "too_large", "invalid_utf8", "network",
+] as const;
 export const reviewStatuses = ["pending", "processing", "completed", "failed"] as const;
 export type TranscriptStatus = (typeof transcriptStatuses)[number];
+export type TranscriptError = (typeof transcriptErrors)[number];
 export type ReviewStatus = (typeof reviewStatuses)[number];
 export type TranscriptTurn = { role: "tutor" | "learner"; text: string; at: string };
 export type ReviewCorrection = { original: string; corrected: string; explanation: string };
@@ -182,6 +188,10 @@ export function parseDograhCall(value: unknown): DograhCall | null {
   if ("transcriptStatus" in value) {
     if (!isOneOf(value.transcriptStatus, transcriptStatuses)) return null;
     result.transcriptStatus = value.transcriptStatus;
+  }
+  if ("transcriptError" in value) {
+    if (!isOneOf(value.transcriptError, transcriptErrors)) return null;
+    result.transcriptError = value.transcriptError;
   }
   return result;
 }

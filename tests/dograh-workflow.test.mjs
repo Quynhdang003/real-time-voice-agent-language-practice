@@ -29,9 +29,9 @@ test("every prompt variable is a known initial_context key with a fallback", () 
     assert.ok(used.has(key), `prompts never use ${key}`);
 });
 
-test("webhook node posts the FluentAI v2 payload and stays disabled until TR-01", () => {
+test("webhook node posts the FluentAI v2 payload and is enabled since TR-01", () => {
   const webhook = definition.nodes.find((node) => node.type === "webhook");
-  assert.equal(webhook.data.enabled, false);
+  assert.equal(webhook.data.enabled, true);
   assert.equal(webhook.data.http_method, "POST");
   assert.equal(webhook.data.endpoint_url, WEBHOOK_URL);
   assert.equal(webhook.data.credential_uuid, null);

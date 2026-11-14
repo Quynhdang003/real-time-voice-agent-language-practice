@@ -141,10 +141,6 @@
 - Dograh Cloud is upgraded by Dograh, not by this repo. When Cloud behaves
   differently from `context/api-contracts.md` → "Dograh platform contract",
   update the contract (and "Observed on Dograh Cloud") first, then the code.
-- Until DC-02 removes the retired self-hosted stack: compose changes keep
-  images pinned by tag **and** digest, and its PowerShell scripts target
-  Windows PowerShell 5.1 (no `&&` / ternaries; binary data never goes through
-  `>` redirection, use `docker compose cp`).
 - Exports must not contain credential UUIDs, embed tokens or provider keys.
   Those are re-linked by hand after an import.
 - Every prompt variable is written as `{{initial_context.<key> | <fallback>}}`.
@@ -164,8 +160,7 @@
   `generate-review`) exports `maxDuration = 60`, which fits the Vercel Hobby
   plan. Nothing may rely on running longer.
 - Hosts and URLs come from environment variables. No `localhost` URL or
-  provider host is hard-coded in app code (the hard-coded host in
-  `getDograhRun` disappears with TR-01). A default value may name the
+  provider host is hard-coded in app code. A default value may name the
   production provider, as `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` does with
   `app.dograh.com`.
 - A new variable is added, in the same change, to `.env.example`, to the
@@ -210,6 +205,5 @@
 - `lib/practice/`, `lib/dograh/`, `lib/ai/`, `lib/actions/` — logic by domain
 - `firebase/` — SDK initialization
 - `dograh/` — workflow spec, workflow exports and import/export scripts for
-  Dograh Cloud (DG-02, DG-03, DC-01); the retired Docker stack and its
-  backup scripts until DC-02
+  Dograh Cloud (DG-02, DG-03, DC-01)
 - `tests/`, `scripts/` (smoke checks), `patches/`, `docs/`, `context/`

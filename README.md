@@ -31,62 +31,45 @@ The widget script URLs are the server-only variables `DOGRAH_WIDGET_SRC_AMERICAN
 The `/voice-call` page passes the URL only to the owner of a session that can still start a call. Never use a
 `NEXT_PUBLIC_` name for them, because it would publish the embed token in the JS bundle.
 
-The Docker stack in `dograh/docker-compose.yml` (with its backup scripts) is retired and will be removed
-(DC-02). The section below describes the current transcript webhook, which TR-01 and TR-02 will change.
+The self-hosted Docker stack used earlier was removed in DC-02.
 
 ## Dograh transcript webhook
 
-Configure Dograh to POST its transcript event to
-`/api/dograh/transcript-webhook` with the `x-dograh-webhook-secret` header matching
-the server's `DOGRAH_WEBHOOK_SECRET`.
+After each call, the Webhook node of both Dograh Cloud workflows posts to
+`https://<production-domain>/api/dograh/transcript-webhook` (calls started on `localhost:3000` are
+delivered there too). The node and its `payload_template` are specified in
+[`dograh/workflow-spec.md`](dograh/workflow-spec.md); the API contract is in
+[`context/api-contracts.md`](context/api-contracts.md).
 
-Set `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` to comma-separated exact, trusted hostnames
-from your actual Dograh `transcript_url` storage URLs (no scheme, path, or
-wildcards). The default is `app.dograh.com`; if Dograh uses another storage host,
-add that host explicitly before testing. Only configure provider-controlled
-public hosts, never localhost or internal services. Downloads require HTTPS,
-reject redirects, time out after 15 seconds, and accept at most 256 KiB.
-Signed query parameters are preserved; API keys are not sent to storage.
+- **Auth:** `Authorization: Bearer <DOGRAH_WEBHOOK_SECRET>`, sent by the node's `bearer_token` credential.
+  A missing secret on the server answers 401 to everything. Use one word (e.g. 32 random bytes as hex).
+- **Payload:** flat strings; `""` means "not sent". `session_id` (from the widget context) finds the
+  session; `workflow_run_id` is only a cross-check. A delivery for a missing session or for another run is
+  answered 200 `skipped` and changes nothing.
+- **Transcript:** downloaded from `transcript_url` over HTTPS. The link and every redirect hop (at most 3,
+  each checked before it is requested) must be on a host in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`
+  (comma-separated exact hostnames; default `app.dograh.com,api.dograh.com`). One 15 s deadline, 256 KiB,
+  strict UTF-8, signed query kept, no API key sent. The result is stored as `dograh.transcript` with
+  `dograh.transcriptStatus` `ready`, `empty` (no speech, or no `transcript_url`) or `error` plus a reason in
+  `dograh.transcriptError`.
+- **Retries:** a timeout, network error or 5xx from storage answers **503** without writing anything, so
+  Dograh retries (attempts 1–4). On the last attempt (`X-Dograh-Delivery-Attempt: 5`, or no header), or for a
+  permanent failure, `error` and its reason are stored.
+- **Idempotent:** once a session is `ready` or `empty`, a redelivery changes nothing and downloads nothing.
+- **Review:** a `ready` transcript also sets `reviewStatus: "pending"`; after answering, the route starts the
+  Gemini review with `after()` (`maxDuration = 60` on Vercel Hobby). The review page stays as a fallback. A
+  `processing` claim is a 3-minute lease (`reviewClaimedAt`), so a review cut off by the time limit can be
+  claimed again.
+- **Finding the storage host:** a link or redirect to a host that is not allowlisted is stored as
+  `untrusted_url` / `redirect_rejected` and logged as `[dograh.webhook.download] {code, host}` (the hostname
+  only, never the URL). Add that host to `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` on Vercel, redeploy, then redeliver.
 
-For local Dograh in Docker with Next.js running on the host, add these server-only
-settings to `.env.local` and restart Next.js:
+To retry a session stuck in `error`, redeliver with `curl` and the Bearer header, with a body holding its
+`session_id`, `workflow_run_id` and the saved `dograh.transcriptUrl` as `transcript_url` (from Firestore). If
+it fails again, the download link may have expired; use the current one from Dograh's run page. Check that `dograh.transcriptStatus` becomes `ready` with parsed turns; HTTP 200 alone does not prove
+the download worked.
 
-```dotenv
-DOGRAH_TRANSCRIPT_MODE=local
-DOGRAH_TRANSCRIPT_LOCAL_ORIGINS=http://localhost:8000,http://localhost:9000
-```
-
-These origins allow the Dograh API on port 8000 to redirect to MinIO on port 9000.
-An origin must match the scheme, hostname, and port exactly, with no path, query,
-or trailing slash. Local origins are ignored unless the mode is exactly `local`.
-Only HTTP(S) is accepted, URL credentials are rejected, and each redirect target
-must pass the URL policy before a request is sent. Downloads follow at most three
-redirects from configured local origins, sharing one 15-second deadline including
-the final body. The 256 KiB limit and UTF-8 validation still apply.
-
-Remove both local settings for public deployments. Without the local opt-in, the
-HTTPS-only policy and rejection of redirects remain unchanged. If Next.js runs in
-a container, configure origins reachable from that container instead of assuming
-that `localhost` refers to the Docker host.
-
-For a known workflow run, the webhook stores parsed turns in `dograh.transcript`
-and sets `dograh.transcriptStatus` to `ready`, `empty`, or `error`. A repeated
-delivery of the same successfully downloaded URL reuses the stored transcript.
-Failed downloads can be retried by redelivering the webhook (use a fresh signed
-URL if expired). Download failures are stored as `error` and acknowledged with
-HTTP 200; there is no automatic background retry.
-
-Run `npm run test:dograh-transcript` for isolated download/parser/webhook tests.
-Also verify a real call on staging: its run ID must already be saved on the
-practice session when the webhook arrives. Unknown runs are acknowledged and
-skipped; they are not queued for later ingestion.
-
-To recover an existing local session after enabling these settings, redeliver
-`POST /api/dograh/transcript-webhook` with the existing secret header and a JSON
-body containing its `workflow_run_id` and full saved `dograh.transcriptUrl` as
-`transcript_url`. Verify `dograh.transcriptStatus` becomes `ready` and parsed turns
-are saved in Firestore, then reload the review page. HTTP 200 alone does not prove
-the transcript downloaded. Do not manually set `ready` without parsed turns.
+Run `npm run test:dograh-transcript` for the download, parser and webhook tests.
 
 ## Testing
 
@@ -137,12 +120,12 @@ A change applies only to new deployments: redeploy after editing.
 | `ADMIN_UID` | The Firebase Auth UID of the single admin account (Firebase console → Authentication → Users). The admin has full access and approves access requests. Without it, nobody can be approved |
 | `PRACTICE_DAILY_CALL_LIMIT` | Full calls per approved learner per day, Vietnam time. Optional; `5` when unset or invalid. The admin is exempt |
 | `DOGRAH_WEBHOOK_SECRET` | A new random value (e.g. 32 random bytes as hex). DC-01 puts the same value in the Dograh Cloud `bearer_token` credential |
-| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com` (DC-01 adds the storage host) |
+| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com,api.dograh.com,<storage host>`. The storage host is the one in the Vercel logs (`[dograh.webhook.download] {code: "redirect_rejected", host}`) after the first real call |
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | The Dograh Cloud embed script URL of each workflow ([`dograh/README.md`](dograh/README.md)). Server-only; never `NEXT_PUBLIC_` |
 
-Do **not** set `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS`,
-`DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL`, `DOGRAH_WORKFLOW_ID`, any `NEXT_PUBLIC_DOGRAH_*`
-variable, or any `DOGRAH_*` variable of the retired Docker stack on Vercel. Until the
+Do **not** set `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` or any `NEXT_PUBLIC_DOGRAH_*` variable on Vercel.
+Delete any other `DOGRAH_*` variable left over from earlier versions (`DOGRAH_WORKFLOW_ID`, the old local
+transcript mode): nothing reads them. Until the
 widget URLs are set, `/voice-call` reports that voice calling is not configured.
 
 ### 3. Firebase

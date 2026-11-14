@@ -51,14 +51,14 @@ Nếu không đặt biến này, script tìm Playwright từ thư mục dự án
 | `practice-session.test.mjs` | Mọi tổ hợp ngôn ngữ/chủ đề/trình độ/thời lượng hợp lệ được chấp nhận; ID/body sai bị từ chối; DTO loại bỏ ownership/field thừa; review sai schema bị loại |
 | `practice-session.test.mjs` | B không đọc/ghi được session A; call đi qua connecting/active/completed; callback trùng không ghi lại; không đổi run ID hoặc mở lại session terminal; lỗi mic/database được xử lý |
 | `dograh-call.test.mjs` | Start gọi widget đồng bộ và chỉ một lần; event lưu đúng thứ tự; mic bị từ chối, offline, run ID thiếu không chuyển sang review; lỗi lưu chặn event sau; dispose loại callback cũ |
-| `dograh-transcript.test.mjs` | Giữ signed query, không gửi credential; HTTPS/exact host/port hợp lệ; URL không tin cậy bị chặn trước fetch; lỗi HTTP/redirect/timeout được che chi tiết |
-| `dograh-transcript.test.mjs` | Chặn quá dung lượng theo cả header và stream; UTF-8 nhiều chunk đúng; UTF-8 lỗi bị từ chối; parser nhận assistant/user, CRLF, Unicode và dòng tiếp nối |
-| `dograh-transcript.test.mjs` | Download → parse → patch tạo ready/empty/error; webhook trùng không tải lại URL đã thành công; lần lỗi có thể tải lại; run lạ không download; lỗi ghi trả unavailable; adapter Firebase truyền downloader và ghi field lồng nhau |
-| `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại |
+| `dograh-transcript.test.mjs` | Giữ signed query, không gửi header/credential; HTTPS/exact host/port hợp lệ; URL không tin cậy bị chặn trước fetch (`untrusted_url` + host); (TR-02) đi theo redirect 301–308 tới storage được phép, chung một deadline, URL tương đối; đích ngoài allowlist, thiếu location, quá 3 hop → `redirect_rejected` mà không gửi request; mã lỗi `http_4xx`/`http_5xx`/`network`/`timeout` không lộ chi tiết |
+| `dograh-transcript.test.mjs` | Chặn quá dung lượng theo cả header và stream (`too_large`); UTF-8 nhiều chunk đúng; UTF-8 lỗi hoặc bị cắt → `invalid_utf8`; parser nhận assistant/user, CRLF, Unicode và dòng tiếp nối |
+| `dograh-webhook.test.mjs` (TR-01) | Payload phẳng v2, `""` = không gửi; session_id/run ID/URL sai bị từ chối; liên kết theo `session_id` → ready/empty/error, giữ field cuộc gọi; không có transcript_url → empty; session lạ, run khác, dữ liệu hỏng → skipped, không tải/ghi; phiên cũ trùng run ID không bị đụng; lưu run ID khi `connected` thất bại; gửi lại là no-op; giao song song thắng; lỗi Firestore → unavailable; adapter Firebase hai transaction, field `dograh.*` lồng nhau; (TR-02) header attempt; lỗi tạm thời ở lần 1–4 → `retry` không ghi, lần 5/thiếu header → lưu `error` + mã; lỗi vĩnh viễn lưu ngay và báo host bị chặn; thành công sau đó xoá mã lỗi; allowlist mặc định/biến môi trường; (TR-03) transcript ready → `reviewStatus: pending` một lần, review đã hoàn tất không bị xếp lại |
+| `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại; (TR-03) `pending` được claim; lease 3 phút (2:59 còn hiệu lực, 3:00 bị lấy lại, claim cũ không có thời gian coi như hết hạn); kết quả của claim đã bị lấy lại bị bỏ; review nền không cần user, cùng claim, không chạy lại review đã xong |
 | `review.test.mjs` | Gemini adapter xác thực JSON/schema/điểm và ánh xạ lỗi quota; lỗi ghi completion không trả thành công |
-| `api.test.mjs` | Gọi trực tiếp cả bốn POST handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth và webhook secret/JSON |
+| `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/503/500, header attempt, review chỉ chạy qua `after()` sau khi trả lời; `maxDuration = 60` ở webhook và generate-review |
 | `firebase-runtime.test.mjs` | Import Firebase Auth và lấy signing key từ RSA JWK thật mà không cần mạng, khi synchronous require(ESM) bị tắt |
-| `session-pipeline.test.mjs` | Nối logic thật từ session → call → download/parse transcript → review → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
+| `session-pipeline.test.mjs` | Nối logic thật từ session → call → webhook v2 (redirect tới storage) → review nền → trang review lấy review đã lưu → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
 
 Các test trên chưa chứng minh transaction Firestore thật, widget/microphone thật,
 chất lượng AI, hoặc toàn bộ giao diện trình duyệt. Case timeout mô phỏng fetch
@@ -105,11 +105,15 @@ Chỉ lưu bằng chứng đã loại bỏ cookie, token, signed URL và dữ li
 ## Vấn đề còn mở
 
 - Hai lỗi ESLint nêu trên chưa được sửa trong phạm vi bổ sung bộ kiểm thử.
-- Review bị ngắt sau khi đã claim processing chưa có lease/timeout phục hồi.
-- Webhook đến trước khi session lưu run ID được ACK và bỏ qua, chưa có hàng đợi.
-- Download lỗi được lưu error rồi ACK 200; cần redeliver để thử lại.
-- Với triển khai public, phải đặt `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` theo host storage thật. Mặc định
-  app.dograh.com không tự cho phép mọi host lưu trữ Dograh có thể sử dụng.
+- ~~Review bị ngắt sau khi đã claim processing chưa có lease/timeout phục hồi~~ — đã sửa ở TR-03
+  (14/11/2026): claim là lease 3 phút (`reviewClaimedAt`), kết quả chỉ được ghi khi claim còn giữ.
+- ~~Webhook đến trước khi session lưu run ID được ACK và bỏ qua~~ — đã sửa ở TR-01 (14/11/2026):
+  webhook tìm phiên theo `session_id` và lưu run ID nếu còn thiếu.
+- ~~Download lỗi được lưu error rồi ACK 200~~ — đã sửa ở TR-02 (14/11/2026): lỗi tạm thời trả 503 cho
+  tới lần gửi cuối để Dograh gửi lại; lỗi lưu kèm mã `dograh.transcriptError`.
+- Với triển khai public, phải đặt `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` gồm cả host storage thật của Dograh
+  Cloud (mặc định chỉ có `app.dograh.com,api.dograh.com`). Từ TR-02, host bị chặn được ghi vào log
+  `[dograh.webhook.download]` để tìm ra; chưa kiểm chứng với cuộc gọi thật.
 - Browser báo run ID chưa tự chứng minh run thuộc người dùng; cần kiểm chứng
   ràng buộc tin cậy trước khi coi dữ liệu transcript là đã xác thực ownership nguồn.
 
@@ -117,56 +121,18 @@ Chưa kết luận sẵn sàng production khi các mục trên và E01–E13 ch�
 kiểm chứng. Với mỗi lần chạy staging, bổ sung ngày, commit, sessionId, kết quả
 thực tế và bằng chứng; không chuyển “Chưa chạy” thành “Đạt” từ kết quả mock.
 
-## Bổ sung: sửa tải transcript Dograh local — 10/09/2026
+## Bổ sung: sửa tải transcript Dograh local — 10/09/2026 (đã gỡ ở DC-02)
 
-Mục này ghi nhận kiểm tra sau đợt baseline ở trên. Next.js chạy trên máy host;
-Dograh Docker publish API ở cổng 8000 và MinIO ở cổng 9000. Transcript thật được
-phục vụ qua `http://localhost:8000` → HTTP 302 → `http://localhost:9000` → HTTP 200.
-Bộ tải cũ chặn HTTP/cổng local và redirect nên webhook lưu `transcriptStatus=error`.
+Mục này ghi nhận kiểm tra sau đợt baseline ở trên, với Dograh chạy bằng Docker trên
+máy (API cổng 8000 → HTTP 302 → MinIO cổng 9000). Đợt sửa này thêm một chế độ tải
+`local` (origin local được liệt kê, tối đa ba redirect, mỗi đích được kiểm tra trước
+khi gửi request).
 
-### Cấu hình và hành vi mới
+- Toàn bộ test lúc đó: **45/45 đạt**. Bộ tải đã tải thật transcript của Dograh run
+  `33` (2.914 byte, 23 lượt nói), chỉ đọc Firestore, không ghi dữ liệu.
+- Kiểm tra này không chứng minh webhook tự lưu thành công hay review Gemini hoàn tất.
 
-Thêm vào `.env.local`, sau đó khởi động lại Next.js:
-
-```dotenv
-DOGRAH_TRANSCRIPT_MODE=local
-DOGRAH_TRANSCRIPT_LOCAL_ORIGINS=http://localhost:8000,http://localhost:9000
-```
-
-- Chỉ mode `local` bật danh sách origin local; mỗi origin phải khớp giao thức,
-  hostname và cổng, không có path/query/dấu `/` cuối.
-- Kiểm tra URL ban đầu và từng đích redirect trước khi gửi request; từ chối
-  credential trong URL và giao thức ngoài HTTP(S).
-- Tối đa ba redirect từ origin local được cấu hình; dùng chung timeout 15 giây
-  cho cả chuỗi và body cuối; giữ giới hạn 256 KiB, UTF-8 và signed query.
-- Khi bỏ hai biến local, chính sách HTTPS và chặn redirect public giữ nguyên.
-  Không dùng cấu hình local này cho triển khai public.
-
-### Kiểm chứng sau sửa
-
-- Toàn bộ test: **45/45 đạt**, gồm năm test mới cho local redirect, đích không
-  được phép, relative URL/redirect loop, giới hạn tải sau redirect và bật/tắt mode
-  ở server adapter. Firebase và provider trong bộ test vẫn được giả lập.
-- `next typegen` và `tsc --noEmit --incremental false`: đạt.
-- ESLint cho hai file TypeScript và file test được sửa: đạt. Không thay đổi các
-  lỗi lint ngoài phạm vi đã ghi ở baseline.
-- `npm run build`: đạt khi chạy ngoài sandbox; lần chạy trong sandbox biên dịch
-  được nhưng bị chặn tạo tiến trình TypeScript (`spawn EPERM`). Runtime kiểm tra
-  vẫn là Node 22.15.0, chưa kiểm chứng lại bằng Node 24.x theo `package.json`.
-- Đã chạy bộ tải vừa sửa với URL thật của Dograh run `33`: tải 2.914 byte,
-  parser đọc 23 lượt nói (11 learner, 12 tutor). Chỉ đọc Firestore và tải file;
-  không ghi dữ liệu, không gọi Gemini, không in nội dung hội thoại hoặc secret.
-- Kiểm tra tải thật này chưa chứng minh webhook tự lưu thành công hay review
-  Gemini hoàn tất. Các case E03/E04 vẫn cần chạy hết luồng sau khi restart app.
-
-### Khôi phục phiên đang lỗi
-
-Gửi lại `POST /api/dograh/transcript-webhook` với header
-`x-dograh-webhook-secret` khớp cấu hình server. Body gồm `workflow_run_id` và
-`transcript_url` lấy nguyên giá trị đã lưu trong phiên tương ứng. Với URL ký có
-thời hạn, cần dùng URL mới nếu URL cũ đã hết hạn.
-
-Kiểm tra Firestore có `dograh.transcriptStatus=ready` và mảng `dograh.transcript`,
-rồi tải lại trang review để bắt đầu tạo đánh giá. Không tự gán `ready` khi chưa có
-lượt nói được parse; HTTP 200 của webhook vẫn chưa chứng minh tải thành công.
-Chưa thực hiện bước khôi phục dữ liệu trong lần sửa mã này.
+**Ngày 14/11/2026 (DC-02):** stack Docker tự host và chế độ tải `local` đã bị xoá,
+cùng các test của nó. FluentAI dùng Dograh Cloud; chính sách tải transcript chỉ còn
+HTTPS tới host trong `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`. TR-02 thêm việc đi theo
+redirect đã kiểm tra cho chính sách này.

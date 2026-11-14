@@ -12,7 +12,7 @@ Since 2026-11-13 the routes are served by the Vercel deployment (`https://<produ
 - Route handlers stay thin: auth → parse JSON (`try/catch` → 400) → call `lib/` → map its `{status}` result to HTTP through a `failures` table. Names in backticks below are those `status` values. Only `generate-review` returns them to the client, as `reason`. Since ACC-01…ACC-03 and LIM-01, `practice-setup` (`access_required`, `call_limit_reached`), `access-request` (`already_pending`, `already_approved`) and the admin route (`not_found`, `invalid_transition`) also return `reason`.
 - Auth dependencies:
   - Session cookie (`getCurrentUser()` in `lib/actions/auth.action.ts`): httpOnly cookie `fluentai_session`, verified with revocation checking. Missing or invalid → 401. `userId` always comes from the cookie, never from the body.
-  - Webhook secret (`app/api/dograh/transcript-webhook/route.ts`): header `x-dograh-webhook-secret`, compared timing-safe with `DOGRAH_WEBHOOK_SECRET`. Missing or wrong → 401.
+  - Webhook Bearer token (`app/api/dograh/transcript-webhook/route.ts`, TR-01): `Authorization: Bearer <token>`, compared timing-safe with `DOGRAH_WEBHOOK_SECRET`. Missing or wrong → 401.
 - Required env unset:
   - `DOGRAH_WEBHOOK_SECRET` → every webhook call gets 401 (fails closed).
   - `FIREBASE_*` → the Admin module throws at import, so every server route fails.
@@ -65,14 +65,15 @@ S = session cookie required. All routes below are S.
   - `corrections`: ≤ 20 items `{original, corrected, explanation}`, each field ≤ 500 chars
   - `vocabulary`: ≤ 20 items `{word ≤ 100, definition ≤ 300}`
   - `tutorFeedback`: ≤ 2,000 chars
-- `generate-review` flow:
+- `generate-review` flow (`lib/practice/review-state.ts`; lease and background trigger **[done TR-03]**). The route exports `maxDuration = 60` (Vercel Hobby), because the Gemini call runs inside the request:
   1. Check ownership, then return a completed review if one exists.
   2. Require `status: completed`.
-  3. Reject `processing` as `already_processing`.
+  3. `processing` with a valid lease (`reviewClaimedAt` less than 3 minutes old, `REVIEW_LEASE_MS`) → `already_processing`. An older claim, or one without a valid `reviewClaimedAt`, is taken over.
   4. Map the transcript status: `error` → `transcript_error`, `empty` → `transcript_empty`, not `ready` → `transcript_pending`.
-  5. Claim `reviewStatus: processing` (inside the transaction).
+  5. Claim inside the transaction: `reviewStatus: processing` + `reviewClaimedAt` (ISO time). A claim is allowed from a missing status, `pending` (set by the webhook), `failed`, or an expired `processing`.
   6. Call Gemini outside the transaction.
-  7. Write `completed` + `review`, or `reviewStatus: failed` on `quota`, `invalid_output` or `unavailable`. A failed review can be generated again.
+  7. Write `completed` + `review`, or `reviewStatus: failed` on `quota`, `invalid_output` or `unavailable`, in a transaction that checks the session still holds **this** claim (same `reviewClaimedAt`), and removes `reviewClaimedAt`. A result whose claim was taken over is dropped, and the request answers `already_processing`. A failed review can be generated again.
+  - **Background trigger:** `generateBackgroundReview(sessionId)` runs the same steps without the ownership check, because the webhook found the session by `session_id`. The webhook route starts it with `after()` (`runBackgroundSessionReview` in `lib/practice/server.ts`, which logs a non-`ok` outcome as `console.warn("[practiceSession.review.background]", {code})`). If the browser has not reported the end of the call yet, it gets `not_ready` and leaves `pending`; the review page claims it later.
 
 ## Server actions
 
@@ -97,29 +98,55 @@ S = session cookie required. All routes below are S.
 | `/review?sessionId=…` | Signed in, owner | Same notices. Shows the review only when `status` is `completed` |
 | `/admin` **[done ACC-03]** | Signed in, `ADMIN_UID` only | Everyone else gets `notFound()` (404), never a hint that the page exists |
 
-## Dograh-facing (secret header)
+## Dograh-facing (Bearer token)
 
-- `POST /api/dograh/transcript-webhook`, header `x-dograh-webhook-secret`. Body (`parseDograhWebhookEvent`):
-  - `workflow_run_id`: number or numeric string, a positive safe integer.
-  - `transcript_url?`, `recording_url?`: http(s) URL, ≤ 2,000 chars. `null` or absent = not sent. **Any other value, including `""`, → 400.**
-  - `gathered_context?.call_summary?`: string, truncated to 4,000 chars and stored as `dograh.summary`.
-  - Other keys are ignored.
-- Processing:
-  - Find the session with `dograh.workflowRunId == workflow_run_id` (`limit(1)`).
-  - Copy the URLs and summary.
-  - If `transcript_url` is present and is not the same URL already stored with status `ready` or `empty`, download it (policy below), parse it and set `transcript` + `transcriptStatus`: `ready` if there are turns, `empty` if none, `error` if the download or parse fails.
-  - Fields are written as nested `dograh.*` updates. They are not written when nothing changed.
-- Download policy:
-  - Public mode: HTTPS, port 443, hostname in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` (default `app.dograh.com`); redirects are rejected. Dograh Cloud's download link redirects to its storage, so every Cloud download fails today (N-01f, fixed by TR-02).
-  - With `DOGRAH_TRANSCRIPT_MODE=local` (retired with the self-hosted stack, removed in DC-02): exact origins from `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` over http(s), with up to 3 redirects, each validated before it is followed.
-  - Always: no URL credentials, 15 s overall, ≤ 256 KiB, strict UTF-8, signed query kept, no API key sent.
-- Responses:
-  - 200 `{success: true}`: processed, unchanged, or download failed (stored as `transcriptStatus: "error"`).
-  - 200 `{success: false, skipped: true}`: no session holds this run ID. Nothing is stored or queued.
-  - 400 `{success: false}`: invalid JSON or `invalid_payload`.
-  - 401 `{success: false}`: wrong or missing secret, or secret not configured.
-  - 500 `{success: false}`: `unavailable` (lookup or write failed).
-- Recovery: redeliver the same body with the secret header (see README). HTTP 200 alone does not prove that the transcript downloaded.
+`POST /api/dograh/transcript-webhook` **[done TR-01]**: `app/api/dograh/transcript-webhook/route.ts` → `ingestDograhTranscriptWebhook` (adapter, `lib/dograh/server.ts`) → `applyDograhWebhook` (pure, `lib/dograh/transcript-webhook.ts`).
+
+- **Webhook node** (configured in Dograh Cloud, specified in `dograh/workflow-spec.md`; enabled in the seed since TR-01):
+  - `http_method: POST`
+  - `endpoint_url: https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook` in both workflows. Deliveries for calls started on `localhost:3000` also go there.
+  - credential `bearer_token` = `DOGRAH_WEBHOOK_SECRET` (the value set on Vercel); no custom headers
+  - `payload_template`:
+
+  ```json
+  {"spec": "fluentai-v2", "session_id": "{{initial_context.session_id}}", "workflow_run_id": "{{workflow_run_id}}",
+   "transcript_url": "{{transcript_url}}", "recording_url": "{{recording_url}}",
+   "call_summary": "{{gathered_context.call_summary}}", "call_duration_seconds": "{{cost_info.call_duration_seconds}}"}
+  ```
+
+- **Auth:** `Authorization: Bearer <token>` (the scheme is case-insensitive; one token, no spaces). The SHA-256 digests of the token and of the trimmed `DOGRAH_WEBHOOK_SECRET` are compared timing-safe, so the secret's length does not leak. A missing or wrong token, another scheme, the old `x-dograh-webhook-secret` header, or no configured secret → 401, before the body is read.
+- **Body** (`parseDograhWebhookEvent`, an allowlist). `""`, `null` or an absent key means "not sent".
+  - `session_id`: required, matches `isPracticeSessionId`. It is the only lookup key.
+  - `workflow_run_id`: required; a canonical numeric string (or a number) holding a positive safe integer.
+  - `transcript_url?`, `recording_url?`: http(s) URL ≤ 2,000 chars.
+  - `call_summary?`: string, truncated to 4,000 chars and stored as `dograh.summary`.
+  - Any other value of these keys → 400. Other keys (`spec`, `call_duration_seconds`, `call_disposition`) are ignored.
+- **Processing:** two Firestore transactions on `practiceSessions/{session_id}`, with the download between them.
+  1. Read and decide:
+     - missing document → `skipped` (`not_found`);
+     - a document that fails `parsePracticeSession` → `skipped` (`invalid_data`);
+     - a stored `dograh.workflowRunId` that differs from the payload → `skipped` (`run_mismatch`);
+     - `transcriptStatus` already `ready` or `empty` → 200 no-op: no download and no write (idempotent per `(session_id, workflow_run_id)`).
+  2. Download and parse `transcript_url` (policy below): turns → `ready`, none → `empty`. Without a `transcript_url` (no speech) the result is `empty` with `transcript: []`, and nothing is downloaded. A failed download has a reason code **[done TR-02]** (`fetchDograhTranscript` returns `{status: "error", reason}`):
+     - transient (`timeout`, `network`, `http_5xx`) before the last attempt → `retry`: answer **503** and write nothing, so Dograh sends the same payload again;
+     - transient on the last attempt, or permanent (`untrusted_url`, `redirect_rejected`, `http_4xx` = any other non-2xx, `too_large`, `invalid_utf8`) → `transcriptStatus: "error"` + `dograh.transcriptError: <reason>`, answered 200.
+     - The last attempt is `X-Dograh-Delivery-Attempt` ≥ 5 (1-based, see the platform contract). A missing or malformed header counts as the last attempt, because no retry can be counted on (e.g. a manual redelivery).
+     - A later success removes `dograh.transcriptError`.
+  3. Read and decide again, because a concurrent delivery may have finished. Then write nested `dograh.*` fields: `workflowRunId` only when it was missing (the browser's `connected` save failed), the URLs and summary that were sent, `transcript`, `transcriptStatus` and `transcriptError`. Nothing is written when nothing changed.
+  - Skips are logged as `console.warn("[dograh.webhook]", {code})`, never with IDs or URLs. Download failures are logged as `console.error("[dograh.webhook.download]", {code, retry, host?})`. `host` is the rejected hostname of an `untrusted_url` or `redirect_rejected` (never the URL), so the storage host can be read from the Vercel logs and allowlisted.
+- **Download policy** (`lib/dograh/fetch-transcript.ts`, **[done TR-02]**):
+  - HTTPS, port 443, no URL credentials, and a hostname in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` (comma-separated exact names, compared in lower case). Unset or blank → `app.dograh.com,api.dograh.com`: the Cloud app and its API origin, which builds the download links (the Cloud embed URL carries `apiEndpoint=https://api.dograh.com`). On Vercel the storage host found in DC-01 is added.
+  - Up to 3 redirects (301/302/303/307/308), followed by hand. Each `Location` is resolved against the current URL and checked with the same rule **before** it is requested. A target off the allowlist, a missing or invalid `Location`, or a 4th redirect → `redirect_rejected`.
+  - One 15 s deadline for every hop and the body; ≤ 256 KiB (declared or streamed); strict UTF-8; signed query kept; no headers or API key sent; `cache: "no-store"`.
+- **Responses:**
+  - 200 `{success: true}`: stored, unchanged, or download failed for good (stored as `transcriptStatus: "error"` with `transcriptError`).
+  - 200 `{success: false, skipped: true}`: `not_found`, `run_mismatch` or `invalid_data`. Nothing is written, and Dograh does not retry a 2xx.
+  - 400 `{success: false}`: invalid JSON or payload (Dograh dead-letters it).
+  - 401 `{success: false}`
+  - 503 `{success: false}`: a transient download failure before the last attempt; nothing was written, and Dograh retries (TR-02).
+  - 500 `{success: false}`: `unavailable` (Firestore failed); Dograh retries.
+- **Review trigger [done TR-03]:** when step 3 stores a `ready` transcript, the same write sets the top-level `reviewStatus: "pending"` (unless it is `completed`; a completed review is never regenerated). The result carries the session ID, and the route answers 200, then starts the background review with `after()`. `empty` and `error` start nothing. The route exports `maxDuration = 60` (Vercel Hobby): the response comes within 15 s and the review uses the rest. A redelivery after `ready` is a no-op and starts nothing.
+- **Recovery:** redeliver the same body with the Bearer header (README). HTTP 200 alone does not prove that the transcript downloaded.
 
 ## Target contracts (v2, planned)
 
@@ -248,58 +275,9 @@ Decided 2026-11-13: registration stays open, and the number of calls per learner
 - Dograh counts size with Python `json.dumps` (`ensure_ascii`), so each non-ASCII character costs 6 bytes. A long Vietnamese scenario or word list can exceed 8 KiB.
 - Dograh then drops the **later** variables. `session_id` is first, so the webhook link survives. `dograhContextBytes()` computes the same size.
 
-### `POST /api/dograh/transcript-webhook` v2 (TR-01, TR-02)
+### `POST /api/practice-session/[sessionId]/generate-review` v2 (RV-01)
 
-- **Webhook node** (configured in Dograh Cloud, specified in `dograh/workflow-spec.md`):
-  - `http_method: POST`
-  - `endpoint_url: https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook` (in the spec and seed since batch 1, replacing `http://host.docker.internal:3000/…`). The same URL is used in both workflows. Deliveries for calls started on `localhost:3000` also go there.
-  - credential `bearer_token` = `DOGRAH_WEBHOOK_SECRET` (the value set on Vercel)
-  - no custom headers
-  - `payload_template`:
-
-  ```json
-  {"spec": "fluentai-v2", "session_id": "{{initial_context.session_id}}", "workflow_run_id": "{{workflow_run_id}}",
-   "transcript_url": "{{transcript_url}}", "recording_url": "{{recording_url}}",
-   "call_summary": "{{gathered_context.call_summary}}", "call_duration_seconds": "{{cost_info.call_duration_seconds}}"}
-  ```
-
-- **Request:**
-  - `Authorization: Bearer <secret>`, compared timing-safe. The `x-dograh-webhook-secret` header is dropped.
-  - Every value is a string, and `""` means "not sent". Dograh also adds `call_disposition`, which FluentAI ignores.
-  - `session_id` must match `isPracticeSessionId`.
-  - `workflow_run_id` must be a numeric string holding a positive safe integer.
-- **Processing** (one Firestore transaction for the read + decision, then a download outside it, then a conditional write):
-  1. Read the session by `session_id`. If it is missing → 200 `{success: false, skipped: true}`.
-  2. If `dograh.workflowRunId` is stored and differs from the payload → 200 `skipped` (`run_mismatch`, logged without IDs in the message) and no write. If it is missing (the `connected` save failed) → store it.
-  3. If `transcriptStatus` is already `ready`/`empty` for this run → 200 no-op (idempotent).
-  4. Download and parse.
-     - `ready`/`empty` → store the transcript.
-     - `ready` → also set `reviewStatus: "pending"` (unless it is `completed`), answer 200, then start the review with `after()`. The route sets `maxDuration`.
-  5. Transient failure (`timeout`, `network`, `http_5xx`):
-     - while `X-Dograh-Delivery-Attempt` < 5 → 503 and no status written, so Dograh retries;
-     - on the final attempt → store `transcriptStatus: "error"` + `transcriptError` and answer 200.
-  6. Permanent failure (`untrusted_url`, `redirect_rejected`, `http_4xx`, `too_large`, `invalid_utf8`) → store `error` + `transcriptError` and answer 200.
-  7. A missing `transcript_url` (no speech) → `transcriptStatus: "empty"`.
-- **Download policy v2 (TR-02):**
-  - One policy: HTTPS, port 443, hostname in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` (on Vercel: `app.dograh.com` plus the storage host recorded in DC-01).
-  - Up to 3 redirects, followed manually. Each `Location` is resolved, then checked against the same rule before it is requested. A target outside the allowlist → `redirect_rejected`. More than 3 hops → `redirect_rejected`.
-  - Unchanged: no URL credentials, signed query kept, no API key sent, one 15 s deadline for all hops and the body, ≤ 256 KiB, strict UTF-8.
-  - The `local` mode stays as it is until DC-02 removes it.
-- **Function limits (TR-03):** the route exports `maxDuration = 60` (fits the Vercel Hobby plan), so `after()` can finish the review. The response itself still comes within 15 s.
-- **Responses:**
-  - 200 `{success: true}`
-  - 200 `{success: false, skipped: true}`
-  - 400 `{success: false}`: invalid JSON or payload
-  - 401
-  - 503: retry
-  - 500: Firestore unavailable; Dograh retries
-
-### `POST /api/practice-session/[sessionId]/generate-review` v2 (TR-03, RV-01)
-
-- Still the page's fallback and the **Try again** action. The route exports `maxDuration = 60` like the webhook, because the Gemini call runs inside the request.
-- A claim is allowed when `reviewStatus` is missing, `pending` or `failed`, or `processing` with `reviewClaimedAt` older than 3 minutes. The claim sets `processing` + `reviewClaimedAt`.
-- The background trigger from the webhook uses the same claim. It runs on the server without a user, because ownership was established by `session_id`.
-- Success and error codes are unchanged from v1. `already_processing` is returned only while the lease is valid. `review` is v2.
+The lease, the `pending` status, `maxDuration` and the background trigger shipped in TR-03 (see "Web API" above). Still planned: `review` becomes v2 (RV-01). Success and error codes stay the same.
 
 ### Review v2 (`review`, `schemaVersion: 2`) (RV-01)
 
@@ -397,6 +375,7 @@ Checked against docs.dograh.com on 2026-10-29. Verified against the Dograh `1.50
     - Headers `X-Dograh-Delivery-Id`, `X-Dograh-Workflow-Run-Id`, `X-Dograh-Delivery-Attempt`; no signature.
     - Timeout 30s, up to 5 attempts with backoff 30s → 60s → 120s → 240s.
     - Retried on 408/425/429/500/502/503/504 and network errors; any other non-2xx is dead-lettered at once.
+    - Re-checked in the open-source `main` branch (`api/tasks/webhook_delivery.py`, `api/constants.py`, read on 2026-11-14, no commit pinned): `X-Dograh-Delivery-Attempt` is **1-based** (`attempt_count + 1`), so the first delivery sends `1` and the last `5` (`WEBHOOK_DELIVERY_MAX_ATTEMPTS`, default 5); the request timeout is 30 s (`WEBHOOK_DELIVERY_TIMEOUT_SECONDS`); redirects are not followed, so a 3xx answer is dead-lettered. Dograh Cloud may configure these differently; FluentAI treats attempt ≥ 5 or a missing header as the last attempt.
 
 ### FluentAI usage of this contract
 
@@ -406,23 +385,23 @@ Checked against docs.dograh.com on 2026-10-29. Verified against the Dograh `1.50
 | Prompt / greeting `{{key}}` templating | **Used (DG-02, spec written):** every prompt, greeting and condition reads `{{initial_context.<key> \| fallback}}` for the v2 keys (enforced by `tests/dograh-workflow.test.mjs`). The workflows still have to be created in Dograh Cloud | Re-checked on Cloud (DC-01) | `dograh/workflow-spec.md` |
 | HTTP tools (preset parameters, body, `messages`, results, timeout) | **Not used** | Not used | — |
 | Text chat sessions | **Not used** | Not used (possibly for manual workflow tests in the Dograh UI) | — |
-| End-of-call **Webhook node** | **Specified (DG-02), disabled until TR-01.** The route still expects `x-dograh-webhook-secret` | **Used (TR-01):** `bearer_token` credential, flat payload with `session_id`, endpoint on the production domain, then enable the node | `transcript-webhook/route.ts`, `dograh/workflow-spec.md` |
-| Webhook payload variables | `workflow_run_id`, `transcript_url`, `recording_url`, nested `gathered_context.call_summary` | `initial_context.session_id`, `workflow_run_id`, `transcript_url`, `recording_url`, `gathered_context.call_summary`, `cost_info.call_duration_seconds` | `transcript-webhook.ts` |
-| Download links (302 → storage, signed 1 h) | **Used** only in local mode with the retired self-hosted stack (API `:8020` → MinIO `:9020`). Public mode rejects the redirect | Dograh Cloud: `https://app.dograh.com/…/download/…` → 302 to the storage host recorded in DC-01; public mode follows validated redirects (TR-02) | `fetch-transcript.ts` |
+| End-of-call **Webhook node** | **Used (TR-01):** `bearer_token` credential, flat payload with `session_id`, endpoint on the production domain; enabled in the seed. The live workflows are switched on by hand after the deploy | Unchanged | `transcript-webhook/route.ts`, `dograh/workflow-spec.md` |
+| Webhook payload variables | **Used (TR-01):** `initial_context.session_id`, `workflow_run_id`, `transcript_url`, `recording_url`, `gathered_context.call_summary`; `cost_info.call_duration_seconds` is sent but ignored | Unchanged | `transcript-webhook.ts` |
+| Download links (302 → storage, signed 1 h) | **Used (TR-02):** up to 3 redirects, each target checked against `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` before it is requested | The storage host is recorded in DC-01 and added on Vercel | `fetch-transcript.ts` |
 | Transcript file format | **Used**; matches the parser regex `^\[(…)\]\s+(assistant\|user):` plus unprefixed continuation lines | Unchanged | `transcript-parser.ts` |
-| Delivery headers (`X-Dograh-*`) | **Not used** | `X-Dograh-Delivery-Attempt` detects the final attempt (TR-02) | — |
-| Delivery timeout / retries | **Ignored:** failures are answered with 200 | 503 for transient failures, so Dograh retries (TR-02); processing ≤ 15 s | — |
+| Delivery headers (`X-Dograh-*`) | **Used (TR-02):** `X-Dograh-Delivery-Attempt` ≥ 5, or missing, is the last attempt | Unchanged | `transcript-webhook/route.ts`, `transcript-webhook.ts` |
+| Delivery timeout / retries | **Used (TR-02):** 503 for transient download failures before the last attempt, so Dograh retries; processing ≤ 15 s download + Firestore, within the 30 s timeout | Unchanged | `transcript-webhook.ts` |
 
 ### FluentAI compatibility notes
 
-Mismatches between the contract above and the current FluentAI code, each
-with its planned resolution. None are fixed yet.
+Mismatches between the contract above and the FluentAI code, each with its
+resolution.
 
-- Missing placeholders render as `""`. FluentAI treats `transcript_url: ""` or `recording_url: ""` as an invalid payload and answers 400, which the contract dead-letters immediately. → TR-01: `""` means "not sent".
-- Every download link answers 302 to the storage host. Outside local mode, FluentAI rejects redirects (`redirect: "error"`), so downloads from Dograh Cloud are expected to fail (not verified). → **In scope since 2026-11-13:** TR-02 follows validated redirects in public mode.
-- A failed download is acknowledged with 200, so Dograh does not retry. The contract retries 5xx up to 5 attempts. The route comment "Dograh doesn't retry by default" contradicts the 1.50.0 contract. → TR-02: 503 until the final attempt.
-- The session is found by run ID. Run IDs belong to one Dograh instance (the stored runs 10–44 come from earlier local stacks; Dograh Cloud numbers its own), so a new transcript can land on an old session, possibly another user's. → TR-01: lookup by `session_id` only.
-- An unknown run is acknowledged with 200 and skipped, so Dograh's retries are never used for it. → TR-01: the `session_id` link no longer depends on the `connected` save.
+- **[fixed TR-01]** Missing placeholders render as `""`; FluentAI now reads `""` as "not sent" instead of answering 400.
+- **[fixed TR-02]** Every download link answers 302 to the storage host, which FluentAI used to reject (N-01f). It now follows up to 3 redirects, checking each target against the allowlist first.
+- **[fixed TR-02]** A failed download was acknowledged with 200, so Dograh never retried. Transient failures now answer 503 until the last attempt.
+- **[fixed TR-01]** The session was found by run ID, which repeats across Dograh instances (the stored runs 10–44 come from earlier local stacks), so a transcript could land on an old session. The lookup is now by `session_id` only, with the run ID as a cross-check.
+- **[fixed TR-01]** A delivery whose run ID was never saved by the browser was skipped. The `session_id` link no longer depends on the `connected` save, and the missing run ID is stored.
 - The stored `transcriptUrl` is the public download link, which redirects to a newly signed MinIO URL on each request (per the contract). Redelivering it after the 1 h signature window may therefore still work. This is unverified; the README advises a fresh URL.
 - The payload shape depends on the Webhook node's `payload_template`. → DG-02 fixes the template shown in "Target contracts".
 - The webhook's processing (≤ 15 s download + Firestore) fits Dograh's 30 s delivery timeout. Review generation must stay outside the response (TR-03).
@@ -463,11 +442,17 @@ containers. Re-check after any version change.
   - The voice and a per-provider `speed` are workflow-level model configuration.
   - Per-call changes are possible only through a pre-call hook's `model_overrides.tts` (`PreCallModelOverride{llm, llm_fallback, tts}`). FluentAI does not use this.
 
-### Observed on Dograh Cloud (DC-01, not done yet)
+### Observed on Dograh Cloud (DC-01, in progress)
 
-To be filled in by DC-01 with dates, from real calls on `https://app.dograh.com`. Each item is compared with the 1.50.0 behavior above:
+Filled in by DC-01 with dates, from real calls on `https://app.dograh.com`. Each item is compared with the 1.50.0 behavior above.
 
-- the widget script URL from the Cloud embed dialog, and the API endpoint the widget uses on the production domain and on `localhost:3000`
+Observed so far:
+
+- **2026-11-14:** the widget script URLs copied from the Cloud embed dialog (read from `.env.local`, parameter names and hosts only) are `https://app.dograh.com/embed/dograh-widget.js` with the parameters `token`, `environment` and `apiEndpoint=https://api.dograh.com`. So the widget talks to `https://api.dograh.com` on every origin, including `localhost:3000`, and no local edit is needed. The `/embed/init` request itself is still to be checked in DevTools.
+
+Still to check:
+
+- the API endpoint the widget actually calls on the production domain and on `localhost:3000` (expected `https://api.dograh.com`)
 - the `/api/v1/public/embed/init` request carries the 18 context keys, and they reach `initial_context` (sanitizer limits unchanged)
 - the Webhook node fields, the `bearer_token` credential, and the delivery headers, timeout and retries
 - the `transcript_url` host, the redirect chain and the storage host (→ `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`)
@@ -501,4 +486,4 @@ Re-verify against Dograh Cloud (DC-01).
 - Observed behavior the code relies on:
   - Disconnect is reported before `connectionStatus` updates.
   - `end()` alone does not cancel a pending start or microphone request; removing the iframe does.
-- Runs API `GET https://app.dograh.com/api/v1/workflow/{DOGRAH_WORKFLOW_ID}/runs/{runId}` with `X-API-Key`: implemented in `getDograhRun` (`lib/dograh/server.ts`) and **not used** anywhere. The host is hard-coded.
+- Runs API (`GET /api/v1/workflow/{id}/runs/{runId}`): **not used**. The unused `getDograhRun` and `DOGRAH_WORKFLOW_ID` were removed in TR-01.

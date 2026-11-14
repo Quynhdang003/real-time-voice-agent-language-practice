@@ -3,6 +3,9 @@ import { getCurrentUser } from "@/lib/actions/auth.action";
 import { createPracticeSessionReview } from "@/lib/practice/server";
 
 export const runtime = "nodejs";
+// The Gemini call runs inside this request; 60 s fits the Vercel Hobby plan, and the 3-minute
+// processing lease lets a later request take over a cut-off attempt.
+export const maxDuration = 60;
 
 export async function POST(request: Request, context: RouteContext<"/api/practice-session/[sessionId]/generate-review">) {
   try {

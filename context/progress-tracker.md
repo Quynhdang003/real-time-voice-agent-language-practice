@@ -39,7 +39,11 @@ change.
      `feat/acc-access-and-call-limit` (C-22…C-25). After the merge, the user
      sets `ADMIN_UID` (and optionally `PRACTICE_DAILY_CALL_LIMIT`) on Vercel
      and does the manual checks listed under C-23…C-25.
-  3. DC-02, TR-01, TR-02, TR-03. They need the Dograh Cloud workflows running.
+  3. DC-02, TR-01, TR-02, TR-03. **Code done 2026-11-14** on branch
+     `feat/tr-webhook-v2` (C-26…C-29), tested with mocks. After the merge,
+     the user does I-04 on the deployment (Dograh Cloud credential and
+     webhook node, the storage host in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`, a
+     real call that ends with a review).
   4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
@@ -390,8 +394,159 @@ without mocks.
   - **Manual check pending (user, after deploy):** with a temporary
     `PRACTICE_DAILY_CALL_LIMIT=1` on Vercel, an approved learner creates
     one session, then sees "Daily limit reached".
+- **C-26** DC-02 retired self-hosted stack deleted (2026-11-14, batch 3):
+  - Deleted `dograh/docker-compose.yml`, `dograh/.env.example`,
+    `dograh/scripts/backup.ps1` / `restore.ps1`, the npm scripts
+    `dograh:up|down|logs|backup` and the `/dograh/backups/` ignore rule.
+  - `fetch-transcript.ts` has one policy (HTTPS, allowlisted host, port 443,
+    redirects rejected until TR-02); the `localOrigins` parameter and
+    `DOGRAH_TRANSCRIPT_MODE` / `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` are gone
+    from the code, `.env.example`, the READMEs and the context files.
+  - `docs/TESTING.md`: the 2026-09-10 local-mode section is condensed into a
+    history note.
+  - `dograh/README.md` §4 records that the Cloud embed URL already carries
+    `apiEndpoint=https://api.dograh.com` (seen in `.env.local` on
+    2026-11-14, parameter names and hosts only).
+  - Verify: `tests/dograh-transcript.test.mjs` replaces the 5 local-mode
+    tests with one DC-02 test (files and npm scripts gone; no retired name in
+    `app/`, `lib/`, `dograh/`, `.env.example` or the READMEs); `npm test`
+    93/93; typegen + `tsc`; build; lint shows only the N-02c baseline.
+    `git grep` finds `localhost:8020`, `fluentai-dograh` and
+    `DOGRAH_TRANSCRIPT_MODE` only in that test and in this file's history.
+- **C-27** TR-01 webhook v2 (2026-11-14, batch 3):
+  - Spec first: the Webhook node is **enabled** in `workflow-spec.md` and the
+    seed (`build-seed-workflow.mjs`), with a note to switch on an already
+    imported workflow only after this deploy.
+  - Route: `Authorization: Bearer <DOGRAH_WEBHOOK_SECRET>`; SHA-256 digests
+    compared timing-safe; the old `x-dograh-webhook-secret` header gets 401.
+  - `lib/dograh/transcript-webhook.ts` (`applyDograhWebhook`, pure): flat
+    payload (`""` = not sent), lookup only by `session_id`, run-ID
+    cross-check (`run_mismatch` → 200 skipped, no write), idempotent once
+    `ready`/`empty`, no `transcript_url` → `empty`, a missing run ID is
+    stored. Two transactions (read + decide; re-read + decide + write) with
+    the download between them. Skips log only a code.
+  - `lib/dograh/server.ts` adapter: `runTransaction` on
+    `practiceSessions/{session_id}`, nested `dograh.*` updates.
+    `getDograhRun` and `DOGRAH_WORKFLOW_ID` are removed.
+  - README, `dograh/README.md` §3, `api-contracts.md` (current "Dograh-facing"
+    section; the TR-02/TR-03 parts stay under Target), `architecture.md`.
+  - Verify: new `tests/dograh-webhook.test.mjs` (11 tests: parsing and
+    rejection, ready/empty/error with call fields kept, no-speech empty,
+    skips without download or write, an old session with the same run ID
+    untouched, run ID stored after a failed `connected`, redelivery no-op and
+    error retry, concurrent delivery, unavailable, Firebase adapter);
+    `tests/api.test.mjs` (Bearer cases → 401 before the body, outcome
+    mapping); `tests/dograh-workflow.test.mjs` (node enabled);
+    `session-pipeline` uses the v2 payload. `npm test` 99/99; typegen +
+    `tsc`; build; lint shows only the N-02c baseline.
+  - Fixes N-01a, N-01c, N-01d, N-01e.
+  - **Manual steps (user, after the merge and deploy):** keep
+    `DOGRAH_WEBHOOK_SECRET` on Vercel (one word); in Dograh Cloud, create the
+    `bearer_token` credential with the same value, select it in the webhook
+    node of both workflows, and switch the node on (after TR-02's allowlist
+    is set, see C-28). Check: `curl` with a wrong Bearer → 401; a real call
+    on the deployment → the session gets `dograh.transcriptUrl` and a
+    `transcriptStatus`, linked by `session_id`.
+- **C-28** TR-02 download reason codes, validated redirects and retries
+  (2026-11-14, batch 3):
+  - Checked first in Dograh's open-source `main` (`api/tasks/webhook_delivery.py`,
+    read 2026-11-14, no commit pinned): `X-Dograh-Delivery-Attempt` is
+    1-based, the last attempt is 5, timeout 30 s, redirects not followed.
+    Recorded in the platform contract.
+  - `fetchDograhTranscript` returns `{status: "ok", text}` or
+    `{status: "error", reason, rejectedHost?}` instead of throwing. Up to 3
+    redirects followed by hand; each target is resolved and checked
+    (HTTPS, port 443, no credentials, allowlisted host) before it is
+    requested; one 15 s deadline for all hops and the body.
+  - `transcriptErrors` / `TranscriptError` and `dograh.transcriptError` in
+    `session.ts` (type and parser), so call events keep it.
+  - `applyDograhWebhook(payload, store, {attempt})`: transient
+    (`timeout`, `network`, `http_5xx`) before the last attempt → `retry`
+    (route 503, nothing written); the last attempt (≥ 5, or a missing or
+    malformed header) or a permanent reason → `error` + `transcriptError`;
+    a later success deletes the reason (`FieldValue.delete()`).
+    `parseDeliveryAttempt` reads the header.
+  - Allowlist default `app.dograh.com,api.dograh.com`
+    (`transcriptAllowedHosts`), because the Cloud embed URL carries
+    `apiEndpoint=https://api.dograh.com`. A rejected host is logged as
+    `[dograh.webhook.download] {code, retry, host}` (hostname only), so the
+    storage host can be read from the Vercel logs.
+  - Docs: `api-contracts.md` (current webhook section, platform delivery
+    note, first "Observed on Dograh Cloud" entry), `architecture.md`,
+    README, `dograh/README.md` §4–5 (find the storage host in the logs),
+    `workflow-spec.md` embed note, `.env.example`, `docs/TESTING.md`.
+  - Verify: `tests/dograh-transcript.test.mjs` (download: redirects
+    allowed, relative, off-list / missing / 4th hop rejected before the
+    request, reason codes, size, UTF-8); `tests/dograh-webhook.test.mjs` +3
+    (attempt header; retry on attempts 1–4 with no write, stored on 5 or
+    without a header; permanent reasons with the host) and the adapter
+    (default and env allowlist, `DeleteTransform`, log line, 503 path);
+    `tests/api.test.mjs` (503, header passed through). `npm test` 104/104;
+    strip-types 5/5; typegen + `tsc`; build; lint shows only the N-02c
+    baseline.
+  - Fixes N-01b and N-01f.
+  - **Manual steps (user, after the deploy):** set
+    `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS=app.dograh.com,api.dograh.com` on Vercel
+    (or leave it unset); after the first real call, read the storage host
+    from the Vercel logs, add it, redeploy, and redeliver that run with
+    `curl` (`dograh/README.md` §5.4). Check: a real Cloud transcript reaches
+    `ready`.
+- **C-29** TR-03 background review with a lease (2026-11-14, batch 3):
+  - `review-state.ts`: a `processing` claim is a 3-minute lease
+    (`REVIEW_LEASE_MS`, top-level `reviewClaimedAt` ISO string). A claim
+    without a valid time (pre-TR-03) counts as expired. `pending` is claimed
+    like a missing status. `writeCompleted` / `writeFailed` take the claim
+    time and write only while the session still holds that claim (a
+    transaction in `server.ts`, which also removes `reviewClaimedAt`); a
+    taken-over result is dropped and the request answers
+    `already_processing`.
+  - `generateBackgroundReview(sessionId)`: the same claim without the
+    ownership check. `runBackgroundSessionReview` (`lib/practice/server.ts`)
+    logs a non-`ok` outcome as a code.
+  - The webhook's write sets the top-level `reviewStatus: "pending"` with a
+    `ready` transcript (unless `completed`) and returns `reviewSessionId`;
+    the route answers, then calls `after(() => runBackgroundSessionReview(id))`.
+  - `maxDuration = 60` on the webhook and `generate-review` routes.
+  - The review page needs no change: `pending` and `processing` already show
+    "generating", and `already_processing` makes it poll.
+  - Verify: `tests/review.test.mjs` +4 (pending claimed; lease boundary
+    2:59 / 3:00 / missing time; taken-over results dropped for success and
+    failure; background review without a user, no repeat);
+    `tests/dograh-webhook.test.mjs` +1 (pending once, never after
+    `completed`; adapter writes top-level `reviewStatus`);
+    `tests/api.test.mjs` (`maxDuration` on both routes; the review is
+    scheduled with `after()` and runs only after the response);
+    `session-pipeline` runs call → webhook with a storage redirect →
+    background review → the page gets the saved review. `npm test` 109/109;
+    strip-types 5/5; typegen + `tsc`; build; lint shows only the N-02c
+    baseline.
+  - Batch check on `next start -p 3100` (commit `11df4d5`): `npm run
+    test:smoke` 13/13; `curl` to the webhook with no header, a wrong Bearer
+    or the old `x-dograh-webhook-secret` header → 401.
+  - Fixes N-03a.
+  - Known gap (Open Question 11): if the browser never reports the end of
+    the call, the session stays `active` and no review is made.
 
 ## In Progress
+
+- **I-04** Batch 3 checks on the deployment (TR-01…TR-03), after the user
+  merges `feat/tr-webhook-v2`. In order:
+  1. Vercel: `DOGRAH_WEBHOOK_SECRET` set (one word);
+     `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` unset or
+     `app.dograh.com,api.dograh.com`; delete `DOGRAH_WORKFLOW_ID` and any
+     old local-mode variable; redeploy if anything changed.
+  2. Dograh Cloud: the `bearer_token` credential with the same secret,
+     selected in the webhook node of both workflows; switch the node on;
+     publish.
+  3. `curl` the webhook with a wrong Bearer → 401.
+  4. A real call on the deployment. In the Vercel logs, look for
+     `[dograh.webhook.download]`: a `host` there is the storage host. Add it
+     to `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`, redeploy, and redeliver that run
+     (`dograh/README.md` §5.4).
+  5. The next real call: the webhook answers in < 15 s, the session goes
+     `transcriptStatus: ready` → `reviewStatus: pending → processing →
+     completed` without the review page open.
+  6. Report the storage host, so "Observed on Dograh Cloud" is completed.
 
 - **I-01** Implemented, awaiting a real-service check (staging case E01):
   registration + profile document, sign-out, password-reset email,
@@ -451,10 +606,6 @@ Rules for every unit:
 | ID | Unit | Depends on | Verify |
 |---|---|---|---|
 | **DC-01** | Dograh Cloud. Spec first: `workflow-spec.md` webhook endpoint, embed steps, and the 1-minute trial guidance (moved from ACC-01); `dograh/README.md` rewritten for Cloud; then `lib.mjs` default base URL `https://app.dograh.com` and `.env.example`. The user does I-02. Re-check the platform contract on Cloud and fill in "Observed on Dograh Cloud" in `api-contracts.md`, including the storage host and any account spending limit (set it if it exists) (fixes N-08) | DEP-01 (needs the domain), DG-05 | `tests/dograh-workflow.test.mjs` passes; a real call per accent on the deployment and on `localhost:3000` reaches `completed`; `/init` carries the 18 keys; the storage host is recorded and set in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` |
-| **DC-02** | Delete the retired self-hosted stack (confirmed 2026-11-13): `dograh/docker-compose.yml`, `dograh/.env.example`, `backup.ps1` / `restore.ps1`, the `dograh:up|down|logs|backup` scripts, the `local` transcript mode and its variables; update README, tests and context | DC-01 | `npm test`, build and lint pass; no `localhost:8020`, `fluentai-dograh` or `DOGRAH_TRANSCRIPT_MODE` left in code or docs |
-| **TR-01** | Webhook v2: Bearer auth, flat payload, `""` means absent, lookup by `session_id`, run cross-check, idempotent transaction; remove `getDograhRun` / `DOGRAH_WORKFLOW_ID` (fixes N-01a,c,d,e). Then enable the Webhook node in both Cloud workflows | DC-01 | Wrong Bearer → 401; redelivery is a no-op; an old session with the same run ID is untouched; on the deployment, a real Cloud delivery is linked by `session_id` |
-| **TR-02** | Download reason codes (`transcriptError`); 503 for transient failures until the final attempt; public mode follows ≤ 3 redirects, each hop validated against the allowlist (fixes N-01b, N-01f) | TR-01 | Tests per reason code and per redirect case (allowed, off-list, too many hops); on the deployment, a real Cloud transcript reaches `ready` |
-| **TR-03** | `reviewStatus: pending` + `after()` trigger; 3-minute lease on `processing`; `maxDuration = 60` (Vercel Hobby) on the webhook and `generate-review` routes (fixes N-03a) | TR-02 | On the deployment: the webhook answers in < 15 s and the review completes without opening the page; lease test |
 | **RV-01** | Review v2 schema, prompt and validator (fixes N-03b,c,d) | TR-03 | Validator rejects fabricated evidence and missing words; one real Gemini call |
 | **RV-02** | Review page v2 + state banners + retry (fixes N-02a,b,c) | RV-01 | Each state via fixtures; two tabs; lint loses the N-02c error |
 | **RV-03** | Weak-point carry-over (3 latest completed reviews, max 5). The user creates the composite index | RV-02, SET-04 | Session N+1 shows the weak points of session N, editable |
@@ -497,22 +648,26 @@ stated otherwise
 
 **Known defects in current code** (each unit above lists which ones it fixes)
 - **N-01** Transcript webhook:
-  - a. Unknown run → 200 `skipped`; the delivery is lost.
+  - a. Unknown run → 200 `skipped`; the delivery is lost. **Fixed TR-01**
+    (lookup by `session_id`; a missing run ID is stored).
   - b. A failed download is answered with 200, so Dograh does not retry.
-  - c. Find-then-update is not transactional.
+    **Fixed TR-02** (503 until the last attempt).
+  - c. Find-then-update is not transactional. **Fixed TR-01.**
   - d. The lookup uses the browser-reported run ID with `limit(1)`, so it can
-    hit an old session after a reinstall.
-  - e. `""` URLs → 400, which Dograh dead-letters.
+    hit an old session after a reinstall. **Fixed TR-01.**
+  - e. `""` URLs → 400, which Dograh dead-letters. **Fixed TR-01.**
   - f. Redirects are rejected outside local mode. **In scope since
     2026-11-13:** Dograh Cloud's download links redirect to storage, so every
-    Cloud transcript download fails today. Fixed by TR-02.
+    Cloud transcript download fails today. **Fixed TR-02** (validated
+    redirects; the storage host still has to be allowlisted on Vercel).
 - **N-02** Review page:
   - a. Polls forever while the transcript is unset.
   - b. Can stay stuck on "Generating your review with AI…" after
     `already_processing` *(inferred)*.
   - c. ESLint `react-hooks/set-state-in-effect` at `review-panel.tsx:35`.
 - **N-03** Review generation:
-  - a. No lease on `processing`.
+  - a. No lease on `processing`. **Fixed TR-03** (3-minute lease, results
+    written only under the claim).
   - b. The prompt is fixed to "English language tutor" and English output
     (practice is now English only; the comment language is still open).
   - c. The transcript is cut at 12,000 chars, possibly mid-turn.
@@ -570,6 +725,13 @@ stated otherwise
    the Firebase console?
 10. For C2 sessions, the skill score 5 is assumed to mean "consistently at the
     top of C2 (near-native)". Confirm or adjust.
+11. (TR-03, 2026-11-14) A review needs `status: completed`, which only the
+    browser reports. If the learner closes the tab during the call, the
+    session stays `active`, so even a `ready` transcript never gets a
+    review. Should a `ready` transcript from the webhook also complete the
+    call (for example, `active` → `completed` with `endReason: dropped`),
+    or is this acceptable for the thesis? No code assumes either answer
+    yet.
 
 **Resolved on 2026-11-13** (answers by the user; details in Architecture
 Decisions):

@@ -8,12 +8,12 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 
 | Layer      | Technology                                                    | Role                                                              |
 | ---------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Framework  | Next.js 16.3.3 (App Router) + React 19.2.8 + TypeScript 5 (strict) | Pages, server actions, API route handlers, `after()` for background work [planned] |
+| Framework  | Next.js 16.3.3 (App Router) + React 19.2.8 + TypeScript 5 (strict) | Pages, server actions, API route handlers, `after()` for background work [done TR-03] |
 | UI         | Tailwind CSS v4 + shadcn (`base-nova`, `@base-ui/react`) + lucide-react | Styling, a few generated primitives, icons                        |
 | Auth       | Firebase Authentication (client SDK 12, Admin SDK 14)         | Email/password sign-in; server session cookie                     |
 | Database   | Cloud Firestore (accessed only through the Admin SDK)         | Profiles, practice sessions, transcripts, reviews                 |
 | File store | Firebase Storage (client SDK)                                 | Optional profile photos                                           |
-| Voice      | **[planned DC-01]** Dograh Cloud, `https://app.dograh.com` (hosted; the version is set by Dograh). Embed widget: voice, headless. The self-hosted Dograh 1.50.0 stack (DG-01) is **[retired]** | Real-time English tutor; end-of-call Webhook node                 |
+| Voice      | **[planned DC-01]** Dograh Cloud, `https://app.dograh.com` (hosted; the version is set by Dograh). Embed widget: voice, headless. The self-hosted Dograh 1.50.0 stack (DG-01) was deleted in DC-02 | Real-time English tutor; end-of-call Webhook node                 |
 | AI review  | Google Gemini via `@google/genai`, model `gemini-3.5-flash-lite` (available, checked 2026-11-09) | Structured JSON review of the transcript                          |
 | Hosting    | **[done DEP-01]** Vercel, Hobby plan: a new project (Git integration, Production Branch `main`, `real-time-voice-agent-language-prac-one.vercel.app`) | Serves pages and route handlers as Node.js Functions; `after()` runs through Vercel's `waitUntil` |
 | Runtime    | Node.js 24.x on Vercel; `next dev` on `localhost:3000` for development | `patch-package` (`jwks-rsa`) kept for Firebase Admin on Vercel    |
@@ -63,19 +63,18 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   Firestore).
 - `components/fluent/`, `components/layout/`, `components/ui/` (generated).
 - `public/dograh-frame.html` — same-origin host document for the widget.
-- `dograh/` **[done DG-01…DG-03; Dograh Cloud changes planned DC-01, DC-02]**:
-  - Kept for Dograh Cloud:
-    - `workflow-spec.md`: the source of truth for prompts and graph
-    - `workflows/fluentai-tutor.seed.json`: built from the spec;
-      `workflows/*.json` hold exports without credentials or tokens
-    - `scripts/`: `build-seed-workflow.mjs`, `import-workflow.mjs`,
-      `export-workflow.mjs`, `lib.mjs`. They call the Dograh Cloud API
-      (`DOGRAH_API_BASE_URL=https://app.dograh.com`, DC-01).
-    - `README.md`: manual steps, in Vietnamese; rewritten for Dograh Cloud in
-      DC-01
-  - **[retired]** Self-hosted stack, deleted in DC-02 (decided 2026-11-13):
-    `docker-compose.yml`, `.env.example` (for `dograh/.env`),
-    `scripts/backup.ps1`, `scripts/restore.ps1`
+- `dograh/` **[done DG-02, DG-03, DC-02; Dograh Cloud setup DC-01]**:
+  - `workflow-spec.md`: the source of truth for prompts and graph
+  - `workflows/fluentai-tutor.seed.json`: built from the spec;
+    `workflows/*.json` hold exports without credentials or tokens
+  - `scripts/`: `build-seed-workflow.mjs`, `import-workflow.mjs`,
+    `export-workflow.mjs`, `lib.mjs`. They call the Dograh Cloud API
+    (`DOGRAH_API_BASE_URL=https://app.dograh.com`, DC-01).
+  - `README.md`: manual steps, in Vietnamese; rewritten for Dograh Cloud in
+    DC-01
+  - The self-hosted stack (`docker-compose.yml`, `dograh/.env.example`,
+    `scripts/backup.ps1`, `scripts/restore.ps1`) was deleted in DC-02
+    (2026-11-14).
 - External, configured by hand:
   - In the Dograh Cloud UI: providers, voices, credentials, embed tokens,
     allowed domains and the Webhook node endpoint.
@@ -113,13 +112,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - Backups: FluentAI does not back up Dograh Cloud data. Recovery is a
     re-import of the JSON exports in `dograh/workflows/`, then re-linking the
     credential, voices and embed tokens by hand.
-- **[retired] FluentAI's self-hosted stack (DG-01, built and verified
-  2026-11-10):** `dograh/docker-compose.yml` (compose project
-  `fluentai-dograh`, Dograh 1.50.0 pinned by tag and digest, ports
-  3020/8020/9020/9021 on 127.0.0.1, `host.docker.internal` for the webhook),
-  plus `backup.ps1` / `restore.ps1`. It is no longer used. DC-02 deletes it,
-  with the `dograh:up|down|logs|backup` scripts and the `local` transcript
-  mode.
+- **[deleted DC-02, 2026-11-14]** FluentAI's self-hosted Dograh 1.50.0
+  stack (DG-01, built and verified 2026-11-10), with its backup scripts, its
+  npm scripts and the `local` transcript download mode. Git history keeps it.
 - The ai-companion project's Dograh (API `:8010`, UI `:3010`, MinIO `:9000`) is
   not used by FluentAI.
 
@@ -142,7 +137,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   default), so Dograh never posts to them. Their URLs are not allowed embed
   domains either. Calls run only on the production domain and on
   `localhost:3000`.
-- **Functions:** every route uses `runtime = "nodejs"`. **[planned TR-03]** The
+- **Functions:** every route uses `runtime = "nodejs"`. **[done TR-03]** The
   webhook and `generate-review` routes export `maxDuration = 60`, which fits
   the Hobby plan with or without Fluid Compute. Within those 60 s, the webhook
   answers in ≤ 15 s and the `after()` Gemini review uses the rest. If an
@@ -227,11 +222,16 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
       `durationMinutes: 1`, and the parser rejects a trial of any other
       length or a full session of 1 minute. A v2 session without `kind` is
       read as `full`.
-  - **[planned TR-02]** `dograh.transcriptError`: a reason code
-    (`untrusted_url|redirect_rejected|http_4xx|http_5xx|timeout|too_large|invalid_utf8|network`).
-    Never a URL.
-  - **[planned TR-03]** `reviewStatus`: `pending|processing|completed|failed`,
-    plus `reviewClaimedAt` (lease).
+  - **[done TR-02]** `dograh.transcriptError`: a reason code
+    (`untrusted_url|redirect_rejected|http_4xx|http_5xx|timeout|too_large|invalid_utf8|network`),
+    present only with `transcriptStatus: "error"` and removed by a later
+    success. Never a URL. `parseDograhCall` keeps it, so call events do not
+    drop it.
+  - **[done TR-03]** `reviewStatus`: `pending|processing|completed|failed`.
+    `pending` is written by the webhook with a `ready` transcript.
+    `reviewClaimedAt` (ISO string, top level) is the lease of a `processing`
+    claim; it is removed with the result. `parsePracticeSession` does not
+    expose it.
   - **[planned RV-01]** `review` v2 (`schemaVersion: 2`); see
     `api-contracts.md` → Target contracts.
   - Optional fields left empty are stored as `null` or `[]`, never `"none"`.
@@ -271,11 +271,10 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - The access level is checked on the server when a session is created.
     Pages only display it. Existing sessions stay readable, and their call
     and review continue after a revoke.
-- Dograh → FluentAI webhook:
-  - Current: header `x-dograh-webhook-secret`.
-  - **[planned TR-01]** `Authorization: Bearer <DOGRAH_WEBHOOK_SECRET>`, from
-    the Webhook node's `bearer_token` credential (Dograh sends no signature).
-    It travels over HTTPS from Dograh Cloud to the production domain.
+- Dograh → FluentAI webhook **[done TR-01]**: `Authorization: Bearer
+  <DOGRAH_WEBHOOK_SECRET>`, from the Webhook node's `bearer_token` credential
+  (Dograh sends no signature). It travels over HTTPS from Dograh Cloud to the
+  production domain. The old `x-dograh-webhook-secret` header is refused.
 - The embed token sits in the widget script URL.
   - **[done DG-05]** The URLs are server-only. `/voice-call` passes the URL
     for the session's accent only to the owner of a `ready` session, so
@@ -320,29 +319,24 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 3. `onCallConnected({workflowRunId})` → the `connected` event is saved. The
    countdown auto-ends the call at the chosen duration. The end saves
    `disconnected`/`error`, removes the iframe and opens `/review`.
-4. After the run, Dograh's worker sends the Webhook node:
-   - Current: payload with `workflow_run_id` + `transcript_url`; the session is
-     found by run ID.
-   - **[planned TR-01]** Flat payload with `session_id` from
-     `{{initial_context.session_id}}`. The webhook endpoint is
-     `https://<production-domain>/api/dograh/transcript-webhook` (Dograh
-     Cloud → Vercel).
-5. Webhook → download (`https://app.dograh.com/api/v1/public/download/…`,
-   expected to answer 302 to Dograh's storage with a URL signed for 1 h;
-   confirmed in DC-01) → parse → store.
-   - Current: download failures are acknowledged with 200. Public mode
-     rejects redirects, so every download from Dograh Cloud fails today
-     (N-01f).
-   - **[planned TR-02]** Public mode follows up to 3 redirects and validates
-     every hop against the allowlist. Transient failures answer 503, so Dograh
-     retries (≤ 5 attempts). The final attempt stores `error` with a reason
-     code.
-6. Review:
-   - Current: triggered by the review page (`generate-review`).
-   - **[planned TR-03]** The webhook marks `reviewStatus: pending` and starts
-     generation with `after()`, which Vercel keeps alive up to the route's
-     `maxDuration`. The page call stays as a fallback. A `processing` claim
-     older than the lease (3 min) can be reclaimed.
+4. After the run, Dograh's worker sends the Webhook node **[done TR-01]**: a
+   flat payload with `session_id` from `{{initial_context.session_id}}`, to
+   `https://<production-domain>/api/dograh/transcript-webhook` (Dograh Cloud →
+   Vercel). The session is read by `session_id`; a stored run ID that differs
+   makes the delivery a no-op.
+5. Webhook → download (the `transcript_url` on a Dograh host, expected to
+   answer 302 to Dograh's storage with a URL signed for 1 h; confirmed in
+   DC-01) → parse → store. **[done TR-02]** The download follows up to 3
+   redirects and checks every hop against the allowlist before requesting
+   it. Transient failures answer 503, so Dograh retries (≤ 5 attempts); the
+   last attempt, or a permanent failure, stores `error` with a reason code.
+6. Review **[done TR-03]**: the webhook marks `reviewStatus: pending` and
+   starts generation with `after()`, which Vercel keeps alive up to the
+   route's `maxDuration`. The review page (`generate-review`) stays as a
+   fallback and the **Try again** action. A `processing` claim older than the
+   lease (3 min) can be taken over. If the browser has not saved
+   `disconnected` yet when the background review runs, it gets `not_ready`
+   and the page claims the review later.
 
 ## Invariants
 
@@ -359,23 +353,29 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
    in transactions.
 6. At most one Gemini review runs per session at a time (claimed
    `processing`). A completed review is never regenerated automatically.
+   **[done TR-03]** The claim is a 3-minute lease (`reviewClaimedAt`), and a
+   result is written only while its claim still holds, so a cut-off attempt
+   that is taken over can never overwrite the newer result.
 7. The webhook fails closed without a configured secret. Downloads come only
    from allowlisted HTTPS hosts (`DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`), with
    ≤ 256 KiB, 15 s, ≤ 3 redirects, strict UTF-8 and no forwarded credentials.
-   **[planned TR-02]** Every redirect target is checked against the same
-   allowlist before it is requested. The current code also has a `local` mode
-   with exact local origins, which DC-02 removes with the self-hosted stack.
+   **[done TR-02]** Every redirect target is checked against the same
+   allowlist before it is requested. There is no other download mode (the
+   `local` mode was deleted in DC-02).
 8. Logs never contain documents, tokens, signed URLs, transcript text or
    provider messages.
 9. Domain logic gets its storage and providers injected. SDK calls live only in
    the adapters (`server.ts`, `lib/ai/*`, `lib/actions/*`).
-10. **[planned TR-01]** The webhook links a delivery to a session **only by
+10. **[done TR-01]** The webhook links a delivery to a session **only by
     `session_id`**. The run ID is a cross-check, never the lookup key. Run IDs
     belong to one Dograh instance: the stored runs 10–44 come from earlier
     local stacks, and Dograh Cloud numbers its runs on its own, so the same ID
     can name different calls.
-11. **[planned TR-01, TR-02]** Webhook processing is idempotent per
-    `(session_id, workflow_run_id)` and answers within Dograh's 30 s timeout.
+11. **[done TR-01, TR-02]** Webhook processing is idempotent per
+    `(session_id, workflow_run_id)`: once the transcript is `ready` or
+    `empty`, a redelivery neither downloads nor writes. A 503 retry writes
+    nothing. It answers within Dograh's 30 s timeout (≤ 15 s download plus
+    Firestore).
     Review generation never runs inside the webhook response.
 12. **[planned RV-01]** A review is stored only if it passes the v2 validator:
     - every listed word or weak point is judged exactly once;
@@ -405,8 +405,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 ## Environment Variables
 
 Names only. Values live in the Vercel project settings (production) and
-`.env.local` (development), plus `dograh/.env` for the retired stack until
-DC-02. `.env.example` documents every name with no secrets (DG-04). Restart
+`.env.local` (development). `.env.example` documents every name with no secrets (DG-04). Restart
 `npm run dev` after editing `.env.local`. Redeploy on Vercel after changing a
 variable there.
 
@@ -420,12 +419,9 @@ variable there.
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | `/voice-call` page (server, `selectWidgetSource`) → `use-dograh-widget.ts` prop | V, L | **[done DG-05]** Required per accent. Server-only. **[planned DC-01]** Dograh Cloud script URLs, copied from the Cloud embed dialog (e.g. `https://app.dograh.com/embed/dograh-widget.js?token=…`; whether `apiEndpoint` is needed locally is checked in DC-01) |
 | `PRACTICE_DAILY_CALL_LIMIT` | `createPracticeSession` (`server.ts`) and `getAccessView` (`access-server.ts`) via `dailyCallLimit` | V, L | **[done LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
 | `ADMIN_UID` | `createPracticeSession` (`lib/practice/server.ts` → `isAdmin`); `/admin` and the admin routes from ACC-03 | V, L | **[done ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
-| `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[planned TR-01]** Used as the Bearer token; the same value goes into the Dograh Cloud `bearer_token` credential |
-| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` | V | Public mode. The code defaults to `app.dograh.com`. **[planned DC-01]** Set to `app.dograh.com` plus the storage host found in DC-01 |
-| `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` | `lib/dograh/server.ts` | Neither | **[retired]** Only for the self-hosted stack. Must stay unset on Vercel. DC-02 removes them from the code |
-| `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export); `DOGRAH_API_KEY` also by the unused `getDograhRun` | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `https://app.dograh.com` (since batch 1; DC-01 confirms the API path) |
-| `DOGRAH_JWT_SECRET`, `DOGRAH_*_PASSWORD`, `DOGRAH_MINIO_ROOT_*`, `DOGRAH_ENABLE_SIGNUP`, `DOGRAH_*_PORT` | `dograh/docker-compose.yml` via `dograh/.env` | Neither | **[retired]** Self-hosted stack only; removed in DC-02 |
-| `DOGRAH_WORKFLOW_ID` | `getDograhRun` (unused) | Neither | **[planned TR-01]** Removed along with `getDograhRun`. The scripts take workflow IDs as arguments |
+| `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[done TR-01]** The Bearer token (one word, e.g. 32 random bytes as hex); the same value goes into the Dograh Cloud `bearer_token` credential |
+| `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` (`transcriptAllowedHosts`) | V | Comma-separated exact hostnames for the transcript link and every redirect hop. Unset or blank → `app.dograh.com,api.dograh.com` (TR-02). **[DC-01]** Set to those two plus the storage host; a rejected host appears in the Vercel logs as `[dograh.webhook.download] {code, host}` |
+| `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export) | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `https://app.dograh.com` (since batch 1; DC-01 confirms the API path) |
 | `TEST_BASE_URL`, `BROWSER_TEST_TOOLING` | `scripts/*` | Shell | Test scripts only. `TEST_BASE_URL=https://<production-domain>` for the deployment smoke check |
 
 The Firebase web config is hard-coded in `firebase/client.ts`.

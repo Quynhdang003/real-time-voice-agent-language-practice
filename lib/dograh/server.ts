@@ -1,56 +1,46 @@
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/firebase/admin";
-import { isRecord } from "@/lib/practice/session";
-import { applyDograhTranscriptEvent } from "./transcript-webhook";
+import { applyDograhWebhook } from "./transcript-webhook";
+import type { TranscriptPatch } from "./transcript-webhook";
 import { fetchDograhTranscript } from "./fetch-transcript";
 
-// Debug/verification primitive only. Do not expose raw provider data through a browser route.
-export async function getDograhRun(runId: number): Promise<unknown> {
-  if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("Invalid Dograh run ID.");
-  const workflowId = process.env.DOGRAH_WORKFLOW_ID?.trim();
-  const apiKey = process.env.DOGRAH_API_KEY?.trim();
-  if (!workflowId || !/^[1-9]\d*$/.test(workflowId) || !apiKey) {
-    throw new Error("Dograh server configuration is missing or invalid.");
-  }
-  try {
-    const response = await fetch(`https://app.dograh.com/api/v1/workflow/${workflowId}/runs/${runId}`, {
-      headers: { "X-API-Key": apiKey },
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw new Error("Dograh request failed.");
-    return await response.json();
-  } catch {
-    throw new Error("Unable to retrieve the Dograh run.");
-  }
+// Dograh Cloud's download links: the app and its API origin (the Cloud embed URL's apiEndpoint is
+// https://api.dograh.com, and the API builds the links). The storage host they redirect to is added on
+// Vercel through DOGRAH_TRANSCRIPT_ALLOWED_HOSTS once it is known (DC-01).
+const DEFAULT_TRANSCRIPT_HOSTS = "app.dograh.com,api.dograh.com";
+
+export function transcriptAllowedHosts(value = process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS): string[] {
+  return (value?.trim() ? value : DEFAULT_TRANSCRIPT_HOSTS)
+    .split(",").map((host) => host.trim().toLowerCase()).filter(Boolean);
 }
-export async function ingestDograhTranscriptWebhook(rawBody: unknown) {
-  return applyDograhTranscriptEvent(rawBody, {
-    fetchTranscript: (url) => fetchDograhTranscript(
-      url,
-      (process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS ?? "app.dograh.com")
-        .split(",").map((host) => host.trim()).filter(Boolean),
-      fetch,
-      process.env.DOGRAH_TRANSCRIPT_MODE === "local"
-        ? (process.env.DOGRAH_TRANSCRIPT_LOCAL_ORIGINS ?? "")
-            .split(",").map((origin) => origin.trim()).filter(Boolean)
-        : [],
-    ),
-    findSessionByRunId: async (runId) => {
-      const snapshot = await adminDb.collection("practiceSessions")
-        .where("dograh.workflowRunId", "==", runId).limit(1).get();
-      if (snapshot.empty) return null;
-      const doc = snapshot.docs[0];
-      const dograh = doc.data().dograh;
-      return { sessionId: doc.id, dograh: isRecord(dograh) ? dograh : undefined };
-    },
-    writePatch: async (sessionId, patch) => {
-      const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
-      for (const [key, value] of Object.entries(patch)) update[`dograh.${key}`] = value;
-      await adminDb.collection("practiceSessions").doc(sessionId).update(update);
-    },
+
+function toUpdate(patch: TranscriptPatch): Record<string, unknown> {
+  const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  // Nested paths keep the call fields the browser saved under dograh; null removes a field.
+  for (const [key, value] of Object.entries(patch)) update[`dograh.${key}`] = value === null ? FieldValue.delete() : value;
+  return update;
+}
+
+export async function ingestDograhTranscriptWebhook(rawBody: unknown, attempt: number | null) {
+  return applyDograhWebhook(rawBody, {
+    transaction: (sessionId, apply) => adminDb.runTransaction(async (transaction) => {
+      const reference = adminDb.collection("practiceSessions").doc(sessionId);
+      return apply({
+        readDocument: async () => {
+          const snapshot = await transaction.get(reference);
+          return snapshot.exists ? snapshot.data() : undefined;
+        },
+        writePatch: async (patch, { markReviewPending }) => {
+          transaction.update(reference, { ...toUpdate(patch), ...(markReviewPending ? { reviewStatus: "pending" } : {}) });
+        },
+      });
+    }),
+    fetchTranscript: (url) => fetchDograhTranscript(url, transcriptAllowedHosts(), fetch),
+    // Codes and a rejected hostname only: never the session ID, the run ID or a URL.
+    onSkip: (reason) => console.warn("[dograh.webhook]", { code: reason }),
+    onDownloadFailure: ({ reason, rejectedHost, retry }) =>
+      console.error("[dograh.webhook.download]", { code: reason, retry, ...(rejectedHost ? { host: rejectedHost } : {}) }),
     onError: (error) => console.error("[dograh.webhook]", { code: error instanceof Error ? error.name : "unknown" }),
-  });
+  }, { attempt });
 }

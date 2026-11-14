@@ -82,7 +82,7 @@ part of the target since 2026-11-13.
    (`https://<production-domain>/api/dograh/transcript-webhook`). FluentAI
    downloads the transcript (Dograh's link redirects to its storage), parses
    and stores it, marks the review `pending` and starts generating it in the
-   background. **[planned TR-01…TR-03]**
+   background. **[done TR-01…TR-03]**
 7. The review page shows the current state: waiting for the transcript,
    generating, failed (with **Try again**), or the finished review.
    **[planned RV-01, RV-02]**
@@ -208,9 +208,10 @@ part of the target since 2026-11-13.
 - **[current]** A webhook and a 0–100 Gemini review exist, but no session
   has ever reached `transcriptStatus: ready` (see `progress-tracker.md` →
   Session Notes).
-- **[planned TR-01…TR-03]** The webhook is authenticated with a Bearer token,
-  linked by `session_id`, idempotent and fast. The review runs in the
-  background.
+- **[done TR-01…TR-03]** The webhook is authenticated with a Bearer token,
+  linked by `session_id` and idempotent. Transient download failures are
+  retried by Dograh, and the review runs in the background. Real Cloud
+  deliveries are still to be checked on the deployment.
 - **[planned RV-01]** Review v2:
   - **Session goals:** each target/review word is `used_correctly`,
     `used_incorrectly` or `not_used`, with evidence and a correction. Grammar
@@ -246,8 +247,8 @@ part of the target since 2026-11-13.
 
 - Practice languages other than English in the UI (the data model keeps
   `language` for later)
-- Self-hosting Dograh. The `fluentai-dograh` Docker stack (DG-01) is
-  **[retired]** and deleted in DC-02.
+- Self-hosting Dograh. The Docker stack built in DG-01 was deleted in DC-02
+  (2026-11-14).
 - Tunnels to a local Next.js. Webhooks are tested on the deployment.
 - Receiving calls or webhooks on Vercel Preview deployments
 - A custom domain and paid Vercel plans
