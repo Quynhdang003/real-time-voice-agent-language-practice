@@ -41,7 +41,7 @@ change.
      and does the manual checks listed under C-23…C-25.
   3. DC-02, TR-01, TR-02, TR-03, on branch `feat/tr-webhook-v2` (started
      2026-11-14). The code is tested with mocks; the deployment checks need
-     the Dograh Cloud workflows running (I-02). DC-02 = C-26.
+     the Dograh Cloud workflows running (I-02). DC-02 = C-26, TR-01 = C-27.
   4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
@@ -411,6 +411,40 @@ without mocks.
     93/93; typegen + `tsc`; build; lint shows only the N-02c baseline.
     `git grep` finds `localhost:8020`, `fluentai-dograh` and
     `DOGRAH_TRANSCRIPT_MODE` only in that test and in this file's history.
+- **C-27** TR-01 webhook v2 (2026-11-14, batch 3):
+  - Spec first: the Webhook node is **enabled** in `workflow-spec.md` and the
+    seed (`build-seed-workflow.mjs`), with a note to switch on an already
+    imported workflow only after this deploy.
+  - Route: `Authorization: Bearer <DOGRAH_WEBHOOK_SECRET>`; SHA-256 digests
+    compared timing-safe; the old `x-dograh-webhook-secret` header gets 401.
+  - `lib/dograh/transcript-webhook.ts` (`applyDograhWebhook`, pure): flat
+    payload (`""` = not sent), lookup only by `session_id`, run-ID
+    cross-check (`run_mismatch` → 200 skipped, no write), idempotent once
+    `ready`/`empty`, no `transcript_url` → `empty`, a missing run ID is
+    stored. Two transactions (read + decide; re-read + decide + write) with
+    the download between them. Skips log only a code.
+  - `lib/dograh/server.ts` adapter: `runTransaction` on
+    `practiceSessions/{session_id}`, nested `dograh.*` updates.
+    `getDograhRun` and `DOGRAH_WORKFLOW_ID` are removed.
+  - README, `dograh/README.md` §3, `api-contracts.md` (current "Dograh-facing"
+    section; the TR-02/TR-03 parts stay under Target), `architecture.md`.
+  - Verify: new `tests/dograh-webhook.test.mjs` (11 tests: parsing and
+    rejection, ready/empty/error with call fields kept, no-speech empty,
+    skips without download or write, an old session with the same run ID
+    untouched, run ID stored after a failed `connected`, redelivery no-op and
+    error retry, concurrent delivery, unavailable, Firebase adapter);
+    `tests/api.test.mjs` (Bearer cases → 401 before the body, outcome
+    mapping); `tests/dograh-workflow.test.mjs` (node enabled);
+    `session-pipeline` uses the v2 payload. `npm test` 99/99; typegen +
+    `tsc`; build; lint shows only the N-02c baseline.
+  - Fixes N-01a, N-01c, N-01d, N-01e.
+  - **Manual steps (user, after the merge and deploy):** keep
+    `DOGRAH_WEBHOOK_SECRET` on Vercel (one word); in Dograh Cloud, create the
+    `bearer_token` credential with the same value, select it in the webhook
+    node of both workflows, and switch the node on (after TR-02's allowlist
+    is set, see C-28). Check: `curl` with a wrong Bearer → 401; a real call
+    on the deployment → the session gets `dograh.transcriptUrl` and a
+    `transcriptStatus`, linked by `session_id`.
 
 ## In Progress
 
@@ -518,12 +552,13 @@ stated otherwise
 
 **Known defects in current code** (each unit above lists which ones it fixes)
 - **N-01** Transcript webhook:
-  - a. Unknown run → 200 `skipped`; the delivery is lost.
+  - a. Unknown run → 200 `skipped`; the delivery is lost. **Fixed TR-01**
+    (lookup by `session_id`; a missing run ID is stored).
   - b. A failed download is answered with 200, so Dograh does not retry.
-  - c. Find-then-update is not transactional.
+  - c. Find-then-update is not transactional. **Fixed TR-01.**
   - d. The lookup uses the browser-reported run ID with `limit(1)`, so it can
-    hit an old session after a reinstall.
-  - e. `""` URLs → 400, which Dograh dead-letters.
+    hit an old session after a reinstall. **Fixed TR-01.**
+  - e. `""` URLs → 400, which Dograh dead-letters. **Fixed TR-01.**
   - f. Redirects are rejected outside local mode. **In scope since
     2026-11-13:** Dograh Cloud's download links redirect to storage, so every
     Cloud transcript download fails today. Fixed by TR-02.

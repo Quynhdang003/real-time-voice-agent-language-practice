@@ -160,8 +160,7 @@
   `generate-review`) exports `maxDuration = 60`, which fits the Vercel Hobby
   plan. Nothing may rely on running longer.
 - Hosts and URLs come from environment variables. No `localhost` URL or
-  provider host is hard-coded in app code (the hard-coded host in
-  `getDograhRun` disappears with TR-01). A default value may name the
+  provider host is hard-coded in app code. A default value may name the
   production provider, as `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` does with
   `app.dograh.com`.
 - A new variable is added, in the same change, to `.env.example`, to the

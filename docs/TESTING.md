@@ -53,10 +53,10 @@ Nếu không đặt biến này, script tìm Playwright từ thư mục dự án
 | `dograh-call.test.mjs` | Start gọi widget đồng bộ và chỉ một lần; event lưu đúng thứ tự; mic bị từ chối, offline, run ID thiếu không chuyển sang review; lỗi lưu chặn event sau; dispose loại callback cũ |
 | `dograh-transcript.test.mjs` | Giữ signed query, không gửi credential; HTTPS/exact host/port hợp lệ; URL không tin cậy bị chặn trước fetch; lỗi HTTP/redirect/timeout được che chi tiết |
 | `dograh-transcript.test.mjs` | Chặn quá dung lượng theo cả header và stream; UTF-8 nhiều chunk đúng; UTF-8 lỗi bị từ chối; parser nhận assistant/user, CRLF, Unicode và dòng tiếp nối |
-| `dograh-transcript.test.mjs` | Download → parse → patch tạo ready/empty/error; webhook trùng không tải lại URL đã thành công; lần lỗi có thể tải lại; run lạ không download; lỗi ghi trả unavailable; adapter Firebase truyền downloader và ghi field lồng nhau |
+| `dograh-webhook.test.mjs` (TR-01) | Payload phẳng v2, `""` = không gửi; session_id/run ID/URL sai bị từ chối; liên kết theo `session_id` → ready/empty/error, giữ field cuộc gọi; không có transcript_url → empty; session lạ, run khác, dữ liệu hỏng → skipped, không tải/ghi; phiên cũ trùng run ID không bị đụng; lưu run ID khi `connected` thất bại; gửi lại là no-op; giao song song thắng; lỗi Firestore → unavailable; adapter Firebase hai transaction, field `dograh.*` lồng nhau |
 | `review.test.mjs` | ID sai bị chặn trước transaction; auth/ownership/completion/transcript gates; chỉ tạo một review khi đang có request xử lý; kết quả đã lưu được dùng lại; quota/output lỗi đánh dấu failed và có thể thử lại |
 | `review.test.mjs` | Gemini adapter xác thực JSON/schema/điểm và ánh xạ lỗi quota; lỗi ghi completion không trả thành công |
-| `api.test.mjs` | Gọi trực tiếp cả bốn POST handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth và webhook secret/JSON |
+| `api.test.mjs` | Gọi trực tiếp các route handler với Request/Response thật, mock auth/database/provider; kiểm tra HTTP status, userId từ auth; webhook: Bearer thiếu/sai/sai scheme/header cũ → 401 trước khi đọc body, ánh xạ ok/skipped/400/500 |
 | `firebase-runtime.test.mjs` | Import Firebase Auth và lấy signing key từ RSA JWK thật mà không cần mạng, khi synchronous require(ESM) bị tắt |
 | `session-pipeline.test.mjs` | Nối logic thật từ session → call → download/parse transcript → review → đọc đúng chủ; dịch vụ ngoài và lưu trữ được giả lập |
 
@@ -106,7 +106,8 @@ Chỉ lưu bằng chứng đã loại bỏ cookie, token, signed URL và dữ li
 
 - Hai lỗi ESLint nêu trên chưa được sửa trong phạm vi bổ sung bộ kiểm thử.
 - Review bị ngắt sau khi đã claim processing chưa có lease/timeout phục hồi.
-- Webhook đến trước khi session lưu run ID được ACK và bỏ qua, chưa có hàng đợi.
+- ~~Webhook đến trước khi session lưu run ID được ACK và bỏ qua~~ — đã sửa ở TR-01 (14/11/2026):
+  webhook tìm phiên theo `session_id` và lưu run ID nếu còn thiếu.
 - Download lỗi được lưu error rồi ACK 200; cần redeliver để thử lại.
 - Với triển khai public, phải đặt `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` theo host storage thật. Mặc định
   app.dograh.com không tự cho phép mọi host lưu trữ Dograh có thể sử dụng.

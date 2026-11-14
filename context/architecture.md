@@ -266,11 +266,10 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - The access level is checked on the server when a session is created.
     Pages only display it. Existing sessions stay readable, and their call
     and review continue after a revoke.
-- Dograh → FluentAI webhook:
-  - Current: header `x-dograh-webhook-secret`.
-  - **[planned TR-01]** `Authorization: Bearer <DOGRAH_WEBHOOK_SECRET>`, from
-    the Webhook node's `bearer_token` credential (Dograh sends no signature).
-    It travels over HTTPS from Dograh Cloud to the production domain.
+- Dograh → FluentAI webhook **[done TR-01]**: `Authorization: Bearer
+  <DOGRAH_WEBHOOK_SECRET>`, from the Webhook node's `bearer_token` credential
+  (Dograh sends no signature). It travels over HTTPS from Dograh Cloud to the
+  production domain. The old `x-dograh-webhook-secret` header is refused.
 - The embed token sits in the widget script URL.
   - **[done DG-05]** The URLs are server-only. `/voice-call` passes the URL
     for the session's accent only to the owner of a `ready` session, so
@@ -315,13 +314,11 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 3. `onCallConnected({workflowRunId})` → the `connected` event is saved. The
    countdown auto-ends the call at the chosen duration. The end saves
    `disconnected`/`error`, removes the iframe and opens `/review`.
-4. After the run, Dograh's worker sends the Webhook node:
-   - Current: payload with `workflow_run_id` + `transcript_url`; the session is
-     found by run ID.
-   - **[planned TR-01]** Flat payload with `session_id` from
-     `{{initial_context.session_id}}`. The webhook endpoint is
-     `https://<production-domain>/api/dograh/transcript-webhook` (Dograh
-     Cloud → Vercel).
+4. After the run, Dograh's worker sends the Webhook node **[done TR-01]**: a
+   flat payload with `session_id` from `{{initial_context.session_id}}`, to
+   `https://<production-domain>/api/dograh/transcript-webhook` (Dograh Cloud →
+   Vercel). The session is read by `session_id`; a stored run ID that differs
+   makes the delivery a no-op.
 5. Webhook → download (`https://app.dograh.com/api/v1/public/download/…`,
    expected to answer 302 to Dograh's storage with a URL signed for 1 h;
    confirmed in DC-01) → parse → store.
@@ -364,13 +361,15 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
    provider messages.
 9. Domain logic gets its storage and providers injected. SDK calls live only in
    the adapters (`server.ts`, `lib/ai/*`, `lib/actions/*`).
-10. **[planned TR-01]** The webhook links a delivery to a session **only by
+10. **[done TR-01]** The webhook links a delivery to a session **only by
     `session_id`**. The run ID is a cross-check, never the lookup key. Run IDs
     belong to one Dograh instance: the stored runs 10–44 come from earlier
     local stacks, and Dograh Cloud numbers its runs on its own, so the same ID
     can name different calls.
-11. **[planned TR-01, TR-02]** Webhook processing is idempotent per
-    `(session_id, workflow_run_id)` and answers within Dograh's 30 s timeout.
+11. **[done TR-01: idempotent; planned TR-02: retries]** Webhook processing
+    is idempotent per `(session_id, workflow_run_id)`: once the transcript is
+    `ready` or `empty`, a redelivery neither downloads nor writes. It answers
+    within Dograh's 30 s timeout.
     Review generation never runs inside the webhook response.
 12. **[planned RV-01]** A review is stored only if it passes the v2 validator:
     - every listed word or weak point is judged exactly once;
@@ -414,10 +413,9 @@ variable there.
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | `/voice-call` page (server, `selectWidgetSource`) → `use-dograh-widget.ts` prop | V, L | **[done DG-05]** Required per accent. Server-only. **[planned DC-01]** Dograh Cloud script URLs, copied from the Cloud embed dialog (e.g. `https://app.dograh.com/embed/dograh-widget.js?token=…`; whether `apiEndpoint` is needed locally is checked in DC-01) |
 | `PRACTICE_DAILY_CALL_LIMIT` | `createPracticeSession` (`server.ts`) and `getAccessView` (`access-server.ts`) via `dailyCallLimit` | V, L | **[done LIM-01]** Full calls per approved learner per day (`Asia/Ho_Chi_Minh`). A positive integer; unset or invalid → the default 5 (decided 2026-11-13). Server-only; the page receives the computed count |
 | `ADMIN_UID` | `createPracticeSession` (`lib/practice/server.ts` → `isAdmin`); `/admin` and the admin routes from ACC-03 | V, L | **[done ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
-| `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[planned TR-01]** Used as the Bearer token; the same value goes into the Dograh Cloud `bearer_token` credential |
+| `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[done TR-01]** The Bearer token (one word, e.g. 32 random bytes as hex); the same value goes into the Dograh Cloud `bearer_token` credential |
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` | V | Public mode. The code defaults to `app.dograh.com`. **[planned DC-01]** Set to `app.dograh.com` plus the storage host found in DC-01 |
-| `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export); `DOGRAH_API_KEY` also by the unused `getDograhRun` | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `https://app.dograh.com` (since batch 1; DC-01 confirms the API path) |
-| `DOGRAH_WORKFLOW_ID` | `getDograhRun` (unused) | Neither | **[planned TR-01]** Removed along with `getDograhRun`. The scripts take workflow IDs as arguments |
+| `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export) | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `https://app.dograh.com` (since batch 1; DC-01 confirms the API path) |
 | `TEST_BASE_URL`, `BROWSER_TEST_TOOLING` | `scripts/*` | Shell | Test scripts only. `TEST_BASE_URL=https://<production-domain>` for the deployment smoke check |
 
 The Firebase web config is hard-coded in `firebase/client.ts`.

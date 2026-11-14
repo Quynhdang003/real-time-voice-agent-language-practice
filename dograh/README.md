@@ -45,7 +45,9 @@ Làm theo mục "Per-workflow settings" của đặc tả:
    cả hai workflow.
    - Endpoint của node đã có sẵn trong seed:
      `https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook`.
-   - **Giữ node ở trạng thái `Enabled: off` cho tới khi TR-01 được deploy.**
+   - Seed mới (từ TR-01) để node ở `Enabled: on`. Với workflow đã import trước đó, **chỉ bật node sau khi
+     bản có TR-01 đã chạy trên production** và `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` đã đặt trên Vercel (xem §5).
+     Lần gửi trước thời điểm đó nhận 401 và Dograh không gửi lại.
 3. **Thời lượng tối đa của cuộc gọi:** nếu Dograh Cloud có cài đặt này, đặt 20 phút.
 4. **Publish** workflow.
 5. **Embed:** chọn Voice, Headless, tắt Auto start.

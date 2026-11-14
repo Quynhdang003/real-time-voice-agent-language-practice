@@ -46,8 +46,8 @@ export function buildWorkflowDefinition(blocks) {
     { id: "webhook", type: "webhook", position: { x: 360, y: 660 },
       data: {
         name: "Send transcript to FluentAI",
-        // Off until FluentAI TR-01 (Bearer auth + session_id lookup) ships; see workflow-spec.md.
-        enabled: false,
+        // On since FluentAI TR-01 (Bearer auth + session_id lookup); see workflow-spec.md.
+        enabled: true,
         http_method: "POST",
         endpoint_url: WEBHOOK_URL,
         credential_uuid: null,

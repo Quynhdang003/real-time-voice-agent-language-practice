@@ -95,7 +95,7 @@
         },
         "data": {
           "name": "Send transcript to FluentAI",
-          "enabled": false,
+          "enabled": true,
           "http_method": "POST",
           "endpoint_url": "https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook",
           "credential_uuid": null,

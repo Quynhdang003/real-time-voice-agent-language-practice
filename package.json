@@ -14,7 +14,7 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "patch-package --error-on-fail",
-    "test:dograh-transcript": "node --test tests/dograh-transcript.test.mjs",
+    "test:dograh-transcript": "node --test tests/dograh-transcript.test.mjs tests/dograh-webhook.test.mjs",
     "test:firebase-runtime": "node --no-experimental-require-module --test tests/firebase-runtime.test.mjs",
     "test:practice-session": "node --test tests/practice-session.test.mjs",
     "test:dograh-call": "node --experimental-strip-types --test tests/dograh-call.test.mjs",

@@ -5,7 +5,7 @@ import { document, review } from "./helpers/fixtures.mjs";
 
 test("session → call → downloaded transcript → review → owned read (in-memory services)", async () => {
   const { applyPracticeSessionCallEvent } = loadTs("lib/practice/call-state.ts");
-  const { applyDograhTranscriptEvent } = loadTs("lib/dograh/transcript-webhook.ts");
+  const { applyDograhWebhook } = loadTs("lib/dograh/transcript-webhook.ts");
   const { fetchDograhTranscript } = loadTs("lib/dograh/fetch-transcript.ts");
   const { generatePracticeSessionReview } = loadTs("lib/practice/review-state.ts");
   const { readPracticeSession } = loadTs("lib/practice/read-session.ts");
@@ -19,11 +19,14 @@ test("session → call → downloaded transcript → review → owned read (in-m
     assert.equal((await applyPracticeSessionCallEvent("session-a", "user-a", event, callStore)).status, "ok");
   }
   assert.equal(doc.status, "completed");
-  await applyDograhTranscriptEvent({ workflow_run_id: 31, transcript_url: "https://storage.example.test/31.txt" }, {
-    findSessionByRunId: async (id) => id === doc.dograh.workflowRunId ? { sessionId: "session-a", dograh: doc.dograh } : null,
+  const delivery = await applyDograhWebhook({ session_id: "session-a", workflow_run_id: "31",
+    transcript_url: "https://storage.example.test/31.txt", recording_url: "", call_summary: "" }, {
+    transaction: async (id, apply) => apply({ readDocument: async () => (id === "session-a" ? doc : undefined),
+      writePatch: async (patch) => { doc.dograh = { ...doc.dograh, ...patch }; } }),
     fetchTranscript: (url) => fetchDograhTranscript(url, ["storage.example.test"], async () => new Response("[00:01] user: I go yesterday")),
-    writePatch: async (_id, patch) => { doc.dograh = { ...doc.dograh, ...patch }; }, onError,
+    onSkip: (reason) => assert.fail(reason), onError,
   });
+  assert.deepEqual(delivery, { status: "ok", changed: true });
   assert.equal(doc.dograh.transcriptStatus, "ready");
   const outcome = await generatePracticeSessionReview("session-a", "user-a", {
     transaction: async (_id, apply) => apply({ readDocument: async () => doc, markProcessing: async () => { doc.reviewStatus = "processing"; } }),

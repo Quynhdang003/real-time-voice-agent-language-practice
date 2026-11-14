@@ -199,7 +199,7 @@ The wrap-up is finished and the learner has said goodbye or has nothing more to 
 | Field | Value |
 |---|---|
 | Name | `Send transcript to FluentAI` |
-| Enabled | **off** until FluentAI unit TR-01 is deployed (the current webhook route still expects the old header and looks sessions up by run ID, which can collide with legacy runs from earlier Dograh instances). Turn it on after TR-01. |
+| Enabled | **on** (since TR-01: the route checks the Bearer token and finds the session by `session_id`). In a workflow imported before TR-01, turn it on only after the TR-01 deploy is live on the production domain and `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` is set there; an earlier delivery gets 401 and is not retried. |
 | HTTP method | `POST` |
 | Endpoint URL | `https://real-time-voice-agent-language-prac-one.vercel.app/api/dograh/transcript-webhook` (the production domain; Dograh Cloud cannot reach `localhost`, so calls started on `localhost:3000` are delivered here too) |
 | Credential | Type `bearer_token`; token = the `DOGRAH_WEBHOOK_SECRET` set on Vercel (create it under Credentials, then select it here) |

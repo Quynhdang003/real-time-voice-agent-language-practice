@@ -111,26 +111,37 @@ test("review API maps all errors and returns saved review", async () => {
   }
 });
 
-test("webhook API rejects missing/wrong secret and malformed JSON before ingestion", async (t) => {
+test("webhook API checks the Bearer token before reading the body, then maps outcomes (TR-01)", async (t) => {
   const previous = process.env.DOGRAH_WEBHOOK_SECRET;
-  process.env.DOGRAH_WEBHOOK_SECRET = "test-only-secret";
+  process.env.DOGRAH_WEBHOOK_SECRET = " test-only-secret ";
   t.after(() => { if (previous === undefined) delete process.env.DOGRAH_WEBHOOK_SECRET; else process.env.DOGRAH_WEBHOOK_SECRET = previous; });
-  let calls = 0, status = "ok";
+  let calls = 0, result = { status: "ok", changed: true };
   const { POST } = loadTs("app/api/dograh/transcript-webhook/route.ts", {
-    "@/lib/dograh/server": { ingestDograhTranscriptWebhook: async () => { calls++; return { status }; } },
+    "@/lib/dograh/server": { ingestDograhTranscriptWebhook: async (body) => { calls++; assert.deepEqual(body, {}); return result; } },
   });
-  assert.equal((await POST(request())).status, 401);
-  const send = (secret, body) => POST(new Request("https://app.example.test", {
-    method: "POST", headers: { "x-dograh-webhook-secret": secret }, body,
-  }));
-  assert.equal((await send("wrong", "{}")).status, 401);
-  assert.equal((await send("test-only-secret", "{")).status, 400);
+  const send = (headers, body = "{}") => POST(new Request("https://app.example.test", { method: "POST", headers, body }));
+  for (const headers of [{}, { authorization: "Bearer wrong" }, { authorization: "Bearer test-only-secret-2" },
+    { authorization: "test-only-secret" }, { authorization: "Basic test-only-secret" }, { authorization: "Bearer" },
+    { "x-dograh-webhook-secret": "test-only-secret" }]) {
+    assert.equal((await send(headers)).status, 401, JSON.stringify(headers));
+  }
+  const bearer = { authorization: "Bearer test-only-secret" };
+  assert.equal((await send(bearer, "{")).status, 400);
   assert.equal(calls, 0);
-  for (const [outcome, expected] of [["ok", 200], ["not_found", 200], ["invalid_payload", 400], ["unavailable", 500]]) {
-    status = outcome; assert.equal((await send("test-only-secret", "{}")).status, expected);
+  assert.equal((await send({ authorization: "bearer  test-only-secret" })).status, 200);
+  for (const [outcome, expected, body] of [
+    [{ status: "ok", changed: false }, 200, { success: true }],
+    [{ status: "skipped", reason: "run_mismatch" }, 200, { success: false, skipped: true }],
+    [{ status: "invalid_payload" }, 400, { success: false }],
+    [{ status: "unavailable" }, 500, { success: false }],
+  ]) {
+    result = outcome;
+    const response = await send(bearer);
+    assert.equal(response.status, expected);
+    assert.deepEqual(await response.json(), body);
   }
   delete process.env.DOGRAH_WEBHOOK_SECRET;
-  assert.equal((await send("test-only-secret", "{}")).status, 401);
+  assert.equal((await send(bearer)).status, 401);
 });
 
 test("access request API authenticates, validates JSON and maps request outcomes", async () => {
