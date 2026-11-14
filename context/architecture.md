@@ -13,7 +13,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 | Auth       | Firebase Authentication (client SDK 12, Admin SDK 14)         | Email/password sign-in; server session cookie                     |
 | Database   | Cloud Firestore (accessed only through the Admin SDK)         | Profiles, practice sessions, transcripts, reviews                 |
 | File store | Firebase Storage (client SDK)                                 | Optional profile photos                                           |
-| Voice      | **[planned DC-01]** Dograh Cloud, `https://app.dograh.com` (hosted; the version is set by Dograh). Embed widget: voice, headless. The self-hosted Dograh 1.50.0 stack (DG-01) is **[retired]** | Real-time English tutor; end-of-call Webhook node                 |
+| Voice      | **[planned DC-01]** Dograh Cloud, `https://app.dograh.com` (hosted; the version is set by Dograh). Embed widget: voice, headless. The self-hosted Dograh 1.50.0 stack (DG-01) was deleted in DC-02 | Real-time English tutor; end-of-call Webhook node                 |
 | AI review  | Google Gemini via `@google/genai`, model `gemini-3.5-flash-lite` (available, checked 2026-11-09) | Structured JSON review of the transcript                          |
 | Hosting    | **[done DEP-01]** Vercel, Hobby plan: a new project (Git integration, Production Branch `main`, `real-time-voice-agent-language-prac-one.vercel.app`) | Serves pages and route handlers as Node.js Functions; `after()` runs through Vercel's `waitUntil` |
 | Runtime    | Node.js 24.x on Vercel; `next dev` on `localhost:3000` for development | `patch-package` (`jwks-rsa`) kept for Firebase Admin on Vercel    |
@@ -63,19 +63,18 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   Firestore).
 - `components/fluent/`, `components/layout/`, `components/ui/` (generated).
 - `public/dograh-frame.html` — same-origin host document for the widget.
-- `dograh/` **[done DG-01…DG-03; Dograh Cloud changes planned DC-01, DC-02]**:
-  - Kept for Dograh Cloud:
-    - `workflow-spec.md`: the source of truth for prompts and graph
-    - `workflows/fluentai-tutor.seed.json`: built from the spec;
-      `workflows/*.json` hold exports without credentials or tokens
-    - `scripts/`: `build-seed-workflow.mjs`, `import-workflow.mjs`,
-      `export-workflow.mjs`, `lib.mjs`. They call the Dograh Cloud API
-      (`DOGRAH_API_BASE_URL=https://app.dograh.com`, DC-01).
-    - `README.md`: manual steps, in Vietnamese; rewritten for Dograh Cloud in
-      DC-01
-  - **[retired]** Self-hosted stack, deleted in DC-02 (decided 2026-11-13):
-    `docker-compose.yml`, `.env.example` (for `dograh/.env`),
-    `scripts/backup.ps1`, `scripts/restore.ps1`
+- `dograh/` **[done DG-02, DG-03, DC-02; Dograh Cloud setup DC-01]**:
+  - `workflow-spec.md`: the source of truth for prompts and graph
+  - `workflows/fluentai-tutor.seed.json`: built from the spec;
+    `workflows/*.json` hold exports without credentials or tokens
+  - `scripts/`: `build-seed-workflow.mjs`, `import-workflow.mjs`,
+    `export-workflow.mjs`, `lib.mjs`. They call the Dograh Cloud API
+    (`DOGRAH_API_BASE_URL=https://app.dograh.com`, DC-01).
+  - `README.md`: manual steps, in Vietnamese; rewritten for Dograh Cloud in
+    DC-01
+  - The self-hosted stack (`docker-compose.yml`, `dograh/.env.example`,
+    `scripts/backup.ps1`, `scripts/restore.ps1`) was deleted in DC-02
+    (2026-11-14).
 - External, configured by hand:
   - In the Dograh Cloud UI: providers, voices, credentials, embed tokens,
     allowed domains and the Webhook node endpoint.
@@ -113,13 +112,9 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
   - Backups: FluentAI does not back up Dograh Cloud data. Recovery is a
     re-import of the JSON exports in `dograh/workflows/`, then re-linking the
     credential, voices and embed tokens by hand.
-- **[retired] FluentAI's self-hosted stack (DG-01, built and verified
-  2026-11-10):** `dograh/docker-compose.yml` (compose project
-  `fluentai-dograh`, Dograh 1.50.0 pinned by tag and digest, ports
-  3020/8020/9020/9021 on 127.0.0.1, `host.docker.internal` for the webhook),
-  plus `backup.ps1` / `restore.ps1`. It is no longer used. DC-02 deletes it,
-  with the `dograh:up|down|logs|backup` scripts and the `local` transcript
-  mode.
+- **[deleted DC-02, 2026-11-14]** FluentAI's self-hosted Dograh 1.50.0
+  stack (DG-01, built and verified 2026-11-10), with its backup scripts, its
+  npm scripts and the `local` transcript download mode. Git history keeps it.
 - The ai-companion project's Dograh (API `:8010`, UI `:3010`, MinIO `:9000`) is
   not used by FluentAI.
 
@@ -363,8 +358,8 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
    from allowlisted HTTPS hosts (`DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`), with
    ≤ 256 KiB, 15 s, ≤ 3 redirects, strict UTF-8 and no forwarded credentials.
    **[planned TR-02]** Every redirect target is checked against the same
-   allowlist before it is requested. The current code also has a `local` mode
-   with exact local origins, which DC-02 removes with the self-hosted stack.
+   allowlist before it is requested. There is no other download mode (the
+   `local` mode was deleted in DC-02).
 8. Logs never contain documents, tokens, signed URLs, transcript text or
    provider messages.
 9. Domain logic gets its storage and providers injected. SDK calls live only in
@@ -405,8 +400,7 @@ Sections describe the **current code** unless marked **[planned UNIT]** or
 ## Environment Variables
 
 Names only. Values live in the Vercel project settings (production) and
-`.env.local` (development), plus `dograh/.env` for the retired stack until
-DC-02. `.env.example` documents every name with no secrets (DG-04). Restart
+`.env.local` (development). `.env.example` documents every name with no secrets (DG-04). Restart
 `npm run dev` after editing `.env.local`. Redeploy on Vercel after changing a
 variable there.
 
@@ -422,9 +416,7 @@ variable there.
 | `ADMIN_UID` | `createPracticeSession` (`lib/practice/server.ts` → `isAdmin`); `/admin` and the admin routes from ACC-03 | V, L | **[done ACC-01]** The Firebase Auth UID of the single admin account (the user registers it normally, then copies its UID from the Firebase console). Server-only. Unset → no admin |
 | `DOGRAH_WEBHOOK_SECRET` | webhook route | V (L only to test the route locally) | Required. Unset means 401. **[planned TR-01]** Used as the Bearer token; the same value goes into the Dograh Cloud `bearer_token` credential |
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `lib/dograh/server.ts` | V | Public mode. The code defaults to `app.dograh.com`. **[planned DC-01]** Set to `app.dograh.com` plus the storage host found in DC-01 |
-| `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` | `lib/dograh/server.ts` | Neither | **[retired]** Only for the self-hosted stack. Must stay unset on Vercel. DC-02 removes them from the code |
 | `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL` | `dograh/scripts/lib.mjs` (import/export); `DOGRAH_API_KEY` also by the unused `getDograhRun` | L only, never V | The API key is created in the Dograh Cloud dashboard. The base URL defaults to `https://app.dograh.com` (since batch 1; DC-01 confirms the API path) |
-| `DOGRAH_JWT_SECRET`, `DOGRAH_*_PASSWORD`, `DOGRAH_MINIO_ROOT_*`, `DOGRAH_ENABLE_SIGNUP`, `DOGRAH_*_PORT` | `dograh/docker-compose.yml` via `dograh/.env` | Neither | **[retired]** Self-hosted stack only; removed in DC-02 |
 | `DOGRAH_WORKFLOW_ID` | `getDograhRun` (unused) | Neither | **[planned TR-01]** Removed along with `getDograhRun`. The scripts take workflow IDs as arguments |
 | `TEST_BASE_URL`, `BROWSER_TEST_TOOLING` | `scripts/*` | Shell | Test scripts only. `TEST_BASE_URL=https://<production-domain>` for the deployment smoke check |
 

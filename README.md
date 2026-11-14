@@ -31,8 +31,8 @@ The widget script URLs are the server-only variables `DOGRAH_WIDGET_SRC_AMERICAN
 The `/voice-call` page passes the URL only to the owner of a session that can still start a call. Never use a
 `NEXT_PUBLIC_` name for them, because it would publish the embed token in the JS bundle.
 
-The Docker stack in `dograh/docker-compose.yml` (with its backup scripts) is retired and will be removed
-(DC-02). The section below describes the current transcript webhook, which TR-01 and TR-02 will change.
+The self-hosted Docker stack used earlier was removed in DC-02. The section below describes the current
+transcript webhook, which TR-01 and TR-02 will change.
 
 ## Dograh transcript webhook
 
@@ -47,27 +47,6 @@ add that host explicitly before testing. Only configure provider-controlled
 public hosts, never localhost or internal services. Downloads require HTTPS,
 reject redirects, time out after 15 seconds, and accept at most 256 KiB.
 Signed query parameters are preserved; API keys are not sent to storage.
-
-For local Dograh in Docker with Next.js running on the host, add these server-only
-settings to `.env.local` and restart Next.js:
-
-```dotenv
-DOGRAH_TRANSCRIPT_MODE=local
-DOGRAH_TRANSCRIPT_LOCAL_ORIGINS=http://localhost:8000,http://localhost:9000
-```
-
-These origins allow the Dograh API on port 8000 to redirect to MinIO on port 9000.
-An origin must match the scheme, hostname, and port exactly, with no path, query,
-or trailing slash. Local origins are ignored unless the mode is exactly `local`.
-Only HTTP(S) is accepted, URL credentials are rejected, and each redirect target
-must pass the URL policy before a request is sent. Downloads follow at most three
-redirects from configured local origins, sharing one 15-second deadline including
-the final body. The 256 KiB limit and UTF-8 validation still apply.
-
-Remove both local settings for public deployments. Without the local opt-in, the
-HTTPS-only policy and rejection of redirects remain unchanged. If Next.js runs in
-a container, configure origins reachable from that container instead of assuming
-that `localhost` refers to the Docker host.
 
 For a known workflow run, the webhook stores parsed turns in `dograh.transcript`
 and sets `dograh.transcriptStatus` to `ready`, `empty`, or `error`. A repeated
@@ -140,9 +119,9 @@ A change applies only to new deployments: redeploy after editing.
 | `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` | `app.dograh.com` (DC-01 adds the storage host) |
 | `DOGRAH_WIDGET_SRC_AMERICAN`, `DOGRAH_WIDGET_SRC_BRITISH` | The Dograh Cloud embed script URL of each workflow ([`dograh/README.md`](dograh/README.md)). Server-only; never `NEXT_PUBLIC_` |
 
-Do **not** set `DOGRAH_TRANSCRIPT_MODE`, `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS`,
-`DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL`, `DOGRAH_WORKFLOW_ID`, any `NEXT_PUBLIC_DOGRAH_*`
-variable, or any `DOGRAH_*` variable of the retired Docker stack on Vercel. Until the
+Do **not** set `DOGRAH_API_KEY`, `DOGRAH_API_BASE_URL`, `DOGRAH_WORKFLOW_ID` or any
+`NEXT_PUBLIC_DOGRAH_*` variable on Vercel. Delete any other `DOGRAH_*` variable left over from the
+removed Docker stack (e.g. the old local transcript mode). Until the
 widget URLs are set, `/voice-call` reports that voice calling is not configured.
 
 ### 3. Firebase

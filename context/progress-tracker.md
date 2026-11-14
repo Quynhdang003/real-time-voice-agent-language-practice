@@ -39,7 +39,9 @@ change.
      `feat/acc-access-and-call-limit` (C-22…C-25). After the merge, the user
      sets `ADMIN_UID` (and optionally `PRACTICE_DAILY_CALL_LIMIT`) on Vercel
      and does the manual checks listed under C-23…C-25.
-  3. DC-02, TR-01, TR-02, TR-03. They need the Dograh Cloud workflows running.
+  3. DC-02, TR-01, TR-02, TR-03, on branch `feat/tr-webhook-v2` (started
+     2026-11-14). The code is tested with mocks; the deployment checks need
+     the Dograh Cloud workflows running (I-02). DC-02 = C-26.
   4. RV-01, RV-02, RV-03, then DATA-01 and E2E-01.
 - Working today with real services: sign-in → practice setup (v1) → real
   Dograh voice call → `completed`. This was run locally, against Dograh
@@ -390,6 +392,25 @@ without mocks.
   - **Manual check pending (user, after deploy):** with a temporary
     `PRACTICE_DAILY_CALL_LIMIT=1` on Vercel, an approved learner creates
     one session, then sees "Daily limit reached".
+- **C-26** DC-02 retired self-hosted stack deleted (2026-11-14, batch 3):
+  - Deleted `dograh/docker-compose.yml`, `dograh/.env.example`,
+    `dograh/scripts/backup.ps1` / `restore.ps1`, the npm scripts
+    `dograh:up|down|logs|backup` and the `/dograh/backups/` ignore rule.
+  - `fetch-transcript.ts` has one policy (HTTPS, allowlisted host, port 443,
+    redirects rejected until TR-02); the `localOrigins` parameter and
+    `DOGRAH_TRANSCRIPT_MODE` / `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` are gone
+    from the code, `.env.example`, the READMEs and the context files.
+  - `docs/TESTING.md`: the 2026-09-10 local-mode section is condensed into a
+    history note.
+  - `dograh/README.md` §4 records that the Cloud embed URL already carries
+    `apiEndpoint=https://api.dograh.com` (seen in `.env.local` on
+    2026-11-14, parameter names and hosts only).
+  - Verify: `tests/dograh-transcript.test.mjs` replaces the 5 local-mode
+    tests with one DC-02 test (files and npm scripts gone; no retired name in
+    `app/`, `lib/`, `dograh/`, `.env.example` or the READMEs); `npm test`
+    93/93; typegen + `tsc`; build; lint shows only the N-02c baseline.
+    `git grep` finds `localhost:8020`, `fluentai-dograh` and
+    `DOGRAH_TRANSCRIPT_MODE` only in that test and in this file's history.
 
 ## In Progress
 

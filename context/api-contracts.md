@@ -111,7 +111,6 @@ S = session cookie required. All routes below are S.
   - Fields are written as nested `dograh.*` updates. They are not written when nothing changed.
 - Download policy:
   - Public mode: HTTPS, port 443, hostname in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` (default `app.dograh.com`); redirects are rejected. Dograh Cloud's download link redirects to its storage, so every Cloud download fails today (N-01f, fixed by TR-02).
-  - With `DOGRAH_TRANSCRIPT_MODE=local` (retired with the self-hosted stack, removed in DC-02): exact origins from `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS` over http(s), with up to 3 redirects, each validated before it is followed.
   - Always: no URL credentials, 15 s overall, ≤ 256 KiB, strict UTF-8, signed query kept, no API key sent.
 - Responses:
   - 200 `{success: true}`: processed, unchanged, or download failed (stored as `transcriptStatus: "error"`).
@@ -284,7 +283,7 @@ Decided 2026-11-13: registration stays open, and the number of calls per learner
   - One policy: HTTPS, port 443, hostname in `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS` (on Vercel: `app.dograh.com` plus the storage host recorded in DC-01).
   - Up to 3 redirects, followed manually. Each `Location` is resolved, then checked against the same rule before it is requested. A target outside the allowlist → `redirect_rejected`. More than 3 hops → `redirect_rejected`.
   - Unchanged: no URL credentials, signed query kept, no API key sent, one 15 s deadline for all hops and the body, ≤ 256 KiB, strict UTF-8.
-  - The `local` mode stays as it is until DC-02 removes it.
+  - There is no other mode: the `local` mode of the self-hosted stack was deleted in DC-02.
 - **Function limits (TR-03):** the route exports `maxDuration = 60` (fits the Vercel Hobby plan), so `after()` can finish the review. The response itself still comes within 15 s.
 - **Responses:**
   - 200 `{success: true}`
@@ -408,7 +407,7 @@ Checked against docs.dograh.com on 2026-10-29. Verified against the Dograh `1.50
 | Text chat sessions | **Not used** | Not used (possibly for manual workflow tests in the Dograh UI) | — |
 | End-of-call **Webhook node** | **Specified (DG-02), disabled until TR-01.** The route still expects `x-dograh-webhook-secret` | **Used (TR-01):** `bearer_token` credential, flat payload with `session_id`, endpoint on the production domain, then enable the node | `transcript-webhook/route.ts`, `dograh/workflow-spec.md` |
 | Webhook payload variables | `workflow_run_id`, `transcript_url`, `recording_url`, nested `gathered_context.call_summary` | `initial_context.session_id`, `workflow_run_id`, `transcript_url`, `recording_url`, `gathered_context.call_summary`, `cost_info.call_duration_seconds` | `transcript-webhook.ts` |
-| Download links (302 → storage, signed 1 h) | **Used** only in local mode with the retired self-hosted stack (API `:8020` → MinIO `:9020`). Public mode rejects the redirect | Dograh Cloud: `https://app.dograh.com/…/download/…` → 302 to the storage host recorded in DC-01; public mode follows validated redirects (TR-02) | `fetch-transcript.ts` |
+| Download links (302 → storage, signed 1 h) | Every redirect is rejected, so Cloud downloads fail (the `local` mode that followed redirects was deleted in DC-02) | Dograh Cloud: `https://app.dograh.com/…/download/…` → 302 to the storage host recorded in DC-01; public mode follows validated redirects (TR-02) | `fetch-transcript.ts` |
 | Transcript file format | **Used**; matches the parser regex `^\[(…)\]\s+(assistant\|user):` plus unprefixed continuation lines | Unchanged | `transcript-parser.ts` |
 | Delivery headers (`X-Dograh-*`) | **Not used** | `X-Dograh-Delivery-Attempt` detects the final attempt (TR-02) | — |
 | Delivery timeout / retries | **Ignored:** failures are answered with 200 | 503 for transient failures, so Dograh retries (TR-02); processing ≤ 15 s | — |

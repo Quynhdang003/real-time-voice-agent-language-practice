@@ -4,8 +4,8 @@ FluentAI dùng **Dograh Cloud** (https://app.dograh.com) cho cuộc gọi giọn
 (`localhost:3000`) lẫn bản production (https://real-time-voice-agent-language-prac-one.vercel.app).
 
 - **Đặc tả workflow** (node, prompt, biến, điều kiện chuyển, webhook) nằm ở [`workflow-spec.md`](workflow-spec.md).
-- **Stack Docker cũ** (`docker-compose.yml`, `.env.example`, `scripts/backup.ps1`, `scripts/restore.ps1`, các lệnh
-  `npm run dograh:up|down|logs|backup`) không còn dùng, và sẽ bị xoá ở DC-02.
+- Stack Docker tự host trước đây đã bị xoá ở DC-02. Nếu máy vẫn còn container hoặc volume cũ của nó, có thể xoá
+  bằng Docker Desktop; FluentAI không dùng tới.
 
 ## 1. Chuẩn bị
 
@@ -66,11 +66,13 @@ Tên biến **không** có tiền tố `NEXT_PUBLIC_`. Biến chỉ nằm ở se
 2. **`.env.local`:**
    - thêm hai biến trên;
    - **xoá** `NEXT_PUBLIC_DOGRAH_WIDGET_SRC`, `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_AMERICAN`,
-     `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH`, `DOGRAH_TRANSCRIPT_MODE` và `DOGRAH_TRANSCRIPT_LOCAL_ORIGINS`;
+     `NEXT_PUBLIC_DOGRAH_WIDGET_SRC_BRITISH` và các biến của chế độ tải transcript `local` cũ (nếu còn);
    - khởi động lại `npm run dev`.
 
-   Nếu gọi từ `localhost:3000` thất bại vì widget gọi `http://localhost:8000` (xem DevTools → Network), thêm
-   `&apiEndpoint=<origin API của Dograh Cloud>` vào **giá trị trong `.env.local`**.
+   URL copy từ hộp thoại embed của Dograh Cloud đã có sẵn `apiEndpoint=https://api.dograh.com` (ghi nhận
+   2026-11-14), nên không cần thêm gì. Nếu một URL không có tham số này và cuộc gọi từ `localhost:3000` gọi tới
+   `http://localhost:8000` (xem DevTools → Network), thêm `&apiEndpoint=https://api.dograh.com` vào giá trị
+   trong `.env.local`.
 
 ## 5. Kiểm tra (DC-01) và gửi lại kết quả
 

@@ -117,56 +117,18 @@ Chưa kết luận sẵn sàng production khi các mục trên và E01–E13 ch�
 kiểm chứng. Với mỗi lần chạy staging, bổ sung ngày, commit, sessionId, kết quả
 thực tế và bằng chứng; không chuyển “Chưa chạy” thành “Đạt” từ kết quả mock.
 
-## Bổ sung: sửa tải transcript Dograh local — 10/09/2026
+## Bổ sung: sửa tải transcript Dograh local — 10/09/2026 (đã gỡ ở DC-02)
 
-Mục này ghi nhận kiểm tra sau đợt baseline ở trên. Next.js chạy trên máy host;
-Dograh Docker publish API ở cổng 8000 và MinIO ở cổng 9000. Transcript thật được
-phục vụ qua `http://localhost:8000` → HTTP 302 → `http://localhost:9000` → HTTP 200.
-Bộ tải cũ chặn HTTP/cổng local và redirect nên webhook lưu `transcriptStatus=error`.
+Mục này ghi nhận kiểm tra sau đợt baseline ở trên, với Dograh chạy bằng Docker trên
+máy (API cổng 8000 → HTTP 302 → MinIO cổng 9000). Đợt sửa này thêm một chế độ tải
+`local` (origin local được liệt kê, tối đa ba redirect, mỗi đích được kiểm tra trước
+khi gửi request).
 
-### Cấu hình và hành vi mới
+- Toàn bộ test lúc đó: **45/45 đạt**. Bộ tải đã tải thật transcript của Dograh run
+  `33` (2.914 byte, 23 lượt nói), chỉ đọc Firestore, không ghi dữ liệu.
+- Kiểm tra này không chứng minh webhook tự lưu thành công hay review Gemini hoàn tất.
 
-Thêm vào `.env.local`, sau đó khởi động lại Next.js:
-
-```dotenv
-DOGRAH_TRANSCRIPT_MODE=local
-DOGRAH_TRANSCRIPT_LOCAL_ORIGINS=http://localhost:8000,http://localhost:9000
-```
-
-- Chỉ mode `local` bật danh sách origin local; mỗi origin phải khớp giao thức,
-  hostname và cổng, không có path/query/dấu `/` cuối.
-- Kiểm tra URL ban đầu và từng đích redirect trước khi gửi request; từ chối
-  credential trong URL và giao thức ngoài HTTP(S).
-- Tối đa ba redirect từ origin local được cấu hình; dùng chung timeout 15 giây
-  cho cả chuỗi và body cuối; giữ giới hạn 256 KiB, UTF-8 và signed query.
-- Khi bỏ hai biến local, chính sách HTTPS và chặn redirect public giữ nguyên.
-  Không dùng cấu hình local này cho triển khai public.
-
-### Kiểm chứng sau sửa
-
-- Toàn bộ test: **45/45 đạt**, gồm năm test mới cho local redirect, đích không
-  được phép, relative URL/redirect loop, giới hạn tải sau redirect và bật/tắt mode
-  ở server adapter. Firebase và provider trong bộ test vẫn được giả lập.
-- `next typegen` và `tsc --noEmit --incremental false`: đạt.
-- ESLint cho hai file TypeScript và file test được sửa: đạt. Không thay đổi các
-  lỗi lint ngoài phạm vi đã ghi ở baseline.
-- `npm run build`: đạt khi chạy ngoài sandbox; lần chạy trong sandbox biên dịch
-  được nhưng bị chặn tạo tiến trình TypeScript (`spawn EPERM`). Runtime kiểm tra
-  vẫn là Node 22.15.0, chưa kiểm chứng lại bằng Node 24.x theo `package.json`.
-- Đã chạy bộ tải vừa sửa với URL thật của Dograh run `33`: tải 2.914 byte,
-  parser đọc 23 lượt nói (11 learner, 12 tutor). Chỉ đọc Firestore và tải file;
-  không ghi dữ liệu, không gọi Gemini, không in nội dung hội thoại hoặc secret.
-- Kiểm tra tải thật này chưa chứng minh webhook tự lưu thành công hay review
-  Gemini hoàn tất. Các case E03/E04 vẫn cần chạy hết luồng sau khi restart app.
-
-### Khôi phục phiên đang lỗi
-
-Gửi lại `POST /api/dograh/transcript-webhook` với header
-`x-dograh-webhook-secret` khớp cấu hình server. Body gồm `workflow_run_id` và
-`transcript_url` lấy nguyên giá trị đã lưu trong phiên tương ứng. Với URL ký có
-thời hạn, cần dùng URL mới nếu URL cũ đã hết hạn.
-
-Kiểm tra Firestore có `dograh.transcriptStatus=ready` và mảng `dograh.transcript`,
-rồi tải lại trang review để bắt đầu tạo đánh giá. Không tự gán `ready` khi chưa có
-lượt nói được parse; HTTP 200 của webhook vẫn chưa chứng minh tải thành công.
-Chưa thực hiện bước khôi phục dữ liệu trong lần sửa mã này.
+**Ngày 14/11/2026 (DC-02):** stack Docker tự host và chế độ tải `local` đã bị xoá,
+cùng các test của nó. FluentAI dùng Dograh Cloud; chính sách tải transcript chỉ còn
+HTTPS tới host trong `DOGRAH_TRANSCRIPT_ALLOWED_HOSTS`. TR-02 thêm việc đi theo
+redirect đã kiểm tra cho chính sách này.

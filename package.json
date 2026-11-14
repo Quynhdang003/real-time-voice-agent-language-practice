@@ -18,10 +18,6 @@
     "test:firebase-runtime": "node --no-experimental-require-module --test tests/firebase-runtime.test.mjs",
     "test:practice-session": "node --test tests/practice-session.test.mjs",
     "test:dograh-call": "node --experimental-strip-types --test tests/dograh-call.test.mjs",
-    "dograh:up": "docker compose -f dograh/docker-compose.yml up -d --wait",
-    "dograh:down": "docker compose -f dograh/docker-compose.yml down",
-    "dograh:logs": "docker compose -f dograh/docker-compose.yml logs -f dograh-api",
-    "dograh:backup": "powershell -ExecutionPolicy Bypass -File dograh/scripts/backup.ps1",
     "dograh:seed": "node dograh/scripts/build-seed-workflow.mjs",
     "dograh:import": "node dograh/scripts/import-workflow.mjs",
     "dograh:export": "node dograh/scripts/export-workflow.mjs"

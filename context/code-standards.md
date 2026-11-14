@@ -141,10 +141,6 @@
 - Dograh Cloud is upgraded by Dograh, not by this repo. When Cloud behaves
   differently from `context/api-contracts.md` → "Dograh platform contract",
   update the contract (and "Observed on Dograh Cloud") first, then the code.
-- Until DC-02 removes the retired self-hosted stack: compose changes keep
-  images pinned by tag **and** digest, and its PowerShell scripts target
-  Windows PowerShell 5.1 (no `&&` / ternaries; binary data never goes through
-  `>` redirection, use `docker compose cp`).
 - Exports must not contain credential UUIDs, embed tokens or provider keys.
   Those are re-linked by hand after an import.
 - Every prompt variable is written as `{{initial_context.<key> | <fallback>}}`.
@@ -210,6 +206,5 @@
 - `lib/practice/`, `lib/dograh/`, `lib/ai/`, `lib/actions/` — logic by domain
 - `firebase/` — SDK initialization
 - `dograh/` — workflow spec, workflow exports and import/export scripts for
-  Dograh Cloud (DG-02, DG-03, DC-01); the retired Docker stack and its
-  backup scripts until DC-02
+  Dograh Cloud (DG-02, DG-03, DC-01)
 - `tests/`, `scripts/` (smoke checks), `patches/`, `docs/`, `context/`

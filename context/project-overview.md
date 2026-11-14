@@ -246,8 +246,8 @@ part of the target since 2026-11-13.
 
 - Practice languages other than English in the UI (the data model keeps
   `language` for later)
-- Self-hosting Dograh. The `fluentai-dograh` Docker stack (DG-01) is
-  **[retired]** and deleted in DC-02.
+- Self-hosting Dograh. The Docker stack built in DG-01 was deleted in DC-02
+  (2026-11-14).
 - Tunnels to a local Next.js. Webhooks are tested on the deployment.
 - Receiving calls or webhooks on Vercel Preview deployments
 - A custom domain and paid Vercel plans

@@ -30,7 +30,7 @@ writing Next.js code (see `AGENTS.md`).
   import/export scripts for Dograh Cloud (`https://app.dograh.com`). The live
   configuration (providers, voices, credentials, embed tokens, allowed
   domains, Webhook node endpoint) is set by hand in the Dograh Cloud UI. The
-  self-hosted Docker stack (DG-01) is retired and removed in DC-02.
+  self-hosted Docker stack (DG-01) was deleted in DC-02.
 - Firebase config — Auth settings (including authorized domains), security
   rules and indexes, managed in the Firebase console, outside this repo
 - Vercel project (DEP-01) — Git link, Production Branch, Node.js version,

@@ -33,10 +33,6 @@ export async function ingestDograhTranscriptWebhook(rawBody: unknown) {
       (process.env.DOGRAH_TRANSCRIPT_ALLOWED_HOSTS ?? "app.dograh.com")
         .split(",").map((host) => host.trim()).filter(Boolean),
       fetch,
-      process.env.DOGRAH_TRANSCRIPT_MODE === "local"
-        ? (process.env.DOGRAH_TRANSCRIPT_LOCAL_ORIGINS ?? "")
-            .split(",").map((origin) => origin.trim()).filter(Boolean)
-        : [],
     ),
     findSessionByRunId: async (runId) => {
       const snapshot = await adminDb.collection("practiceSessions")
